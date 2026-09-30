@@ -1,5 +1,4 @@
 import { OnOff } from '../../components/ui.jsx'
-import { fromDeg, fromPct, toDeg, toPct } from './hsl.js'
 
 function Slider({ label, value, min, max, step = 1, display, track, disabled, onChange }) {
   return (
@@ -20,69 +19,83 @@ function Slider({ label, value, min, max, step = 1, display, track, disabled, on
   )
 }
 
-// Brightness/CCT put the light in CCT mode; hue/saturation/lightness put it in HSL mode.
+/*
+ * Controls follow the light's API mode:
+ *   mode 1  single brightness channel  -> Power, Brightness
+ *   mode 2  separate CCT/HSL channels  -> Power, CCT, Hue, Saturation, Lightness
+ *   unknown (e.g. groups)              -> everything
+ * onChange patches: { on } | { brightness } | { cct } | { hsl: { h, s, l } }
+ */
 export default function LightControl({ state, disabled, onChange }) {
-  const hue = toDeg(state.hsl.h)
-  const sat = toPct(state.hsl.s)
-  const light = toPct(state.hsl.l)
-  const setHsl = (patch) => onChange({ mode: 'hsl', hsl: { ...state.hsl, ...patch } })
+  const showBrightness = state.mode !== 2
+  const showColor = state.mode !== 1
+  const brightness = state.brightness ?? 0
+  const cct = state.cct ?? 4000
+  const hsl = state.hsl ?? { h: 0, s: 0, l: 0 }
+  const setHsl = (patch) => onChange({ hsl: { ...hsl, ...patch } })
 
   return (
     <>
       <div className="slider-row">
         <span className="slider-label">Power</span>
-        <OnOff on={state.on} disabled={disabled} onChange={(on) => onChange({ on })} />
+        <OnOff on={Boolean(state.on)} disabled={disabled} onChange={(on) => onChange({ on })} />
       </div>
-      <Slider
-        label="Brightness"
-        value={state.brightness}
-        min={0}
-        max={100}
-        display={`${state.brightness}%`}
-        disabled={disabled}
-        onChange={(brightness) => onChange({ brightness, mode: 'cct' })}
-      />
-      <Slider
-        label="CCT"
-        value={state.cct}
-        min={2700}
-        max={6500}
-        step={100}
-        display={`${state.cct} K`}
-        track="linear-gradient(90deg, #ffb46b, #fff4e6, #cfe0ff)"
-        disabled={disabled}
-        onChange={(cct) => onChange({ cct, mode: 'cct' })}
-      />
-      <Slider
-        label="Hue"
-        value={hue}
-        min={0}
-        max={360}
-        display={`${hue}°`}
-        track="linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red)"
-        disabled={disabled}
-        onChange={(d) => setHsl({ h: fromDeg(d) })}
-      />
-      <Slider
-        label="Saturation"
-        value={sat}
-        min={0}
-        max={100}
-        display={`${sat}%`}
-        track={`linear-gradient(90deg, hsl(${hue} 0% 50%), hsl(${hue} 100% 50%))`}
-        disabled={disabled}
-        onChange={(p) => setHsl({ s: fromPct(p) })}
-      />
-      <Slider
-        label="Lightness"
-        value={light}
-        min={0}
-        max={100}
-        display={`${light}%`}
-        track={`linear-gradient(90deg, #000, hsl(${hue} ${sat}% 50%), #fff)`}
-        disabled={disabled}
-        onChange={(p) => setHsl({ l: fromPct(p) })}
-      />
+      {showBrightness && (
+        <Slider
+          label="Brightness"
+          value={brightness}
+          min={0}
+          max={100}
+          display={`${brightness}%`}
+          disabled={disabled}
+          onChange={(v) => onChange({ brightness: v })}
+        />
+      )}
+      {showColor && (
+        <>
+          <Slider
+            label="CCT"
+            value={cct}
+            min={2700}
+            max={6500}
+            step={100}
+            display={`${cct} K`}
+            track="linear-gradient(90deg, #ffb46b, #fff4e6, #cfe0ff)"
+            disabled={disabled}
+            onChange={(v) => onChange({ cct: v })}
+          />
+          <Slider
+            label="Hue"
+            value={hsl.h}
+            min={0}
+            max={360}
+            display={`${hsl.h}°`}
+            track="linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red)"
+            disabled={disabled}
+            onChange={(v) => setHsl({ h: v })}
+          />
+          <Slider
+            label="Saturation"
+            value={hsl.s}
+            min={0}
+            max={100}
+            display={`${hsl.s}%`}
+            track={`linear-gradient(90deg, hsl(${hsl.h} 0% 50%), hsl(${hsl.h} 100% 50%))`}
+            disabled={disabled}
+            onChange={(v) => setHsl({ s: v })}
+          />
+          <Slider
+            label="Lightness"
+            value={hsl.l}
+            min={0}
+            max={100}
+            display={`${hsl.l}%`}
+            track={`linear-gradient(90deg, #000, hsl(${hsl.h} ${hsl.s}% 50%), #fff)`}
+            disabled={disabled}
+            onChange={(v) => setHsl({ l: v })}
+          />
+        </>
+      )}
     </>
   )
 }

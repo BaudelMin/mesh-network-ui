@@ -1,7 +1,7 @@
 import { PlayIcon } from './icons.jsx'
 import { Card, Chip } from './ui.jsx'
 
-export default function ScenesTab({ scenes, nodes, notify }) {
+export default function ScenesTab({ scenes, nodes, onRecall, notify }) {
   const nodeName = (id) => nodes.find((n) => n.id === id)?.name ?? id
 
   return (
@@ -19,13 +19,13 @@ export default function ScenesTab({ scenes, nodes, notify }) {
                     scene_id: {s.id} · {s.members.length} {s.members.length === 1 ? 'node' : 'nodes'} registered
                   </p>
                 </div>
-                <span className="badge">#{s.number}</span>
+                {s.number !== undefined && <span className="badge">#{s.number}</span>}
               </div>
               <div className="chips">
                 {s.members.map((id) => <Chip key={id}>{nodeName(id)}</Chip>)}
               </div>
               <div className="item-foot">
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => notify(`Recalled scene ${s.name}`)}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => onRecall(s.id).then(() => notify(`Recall sent: ${s.name}`))}>
                   <PlayIcon /> Recall
                 </button>
               </div>

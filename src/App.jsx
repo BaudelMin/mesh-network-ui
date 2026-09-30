@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useGateway } from './api/useGateway.js'
 import GroupsTab from './components/GroupsTab.jsx'
 import InfoTab from './components/InfoTab.jsx'
 import NodesTab from './components/NodesTab.jsx'
 import ScenesTab from './components/ScenesTab.jsx'
 import { GridIcon, InfoIcon, RefreshIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
-import { gateway as initialGateway, initialGroups, initialNodes, initialScenes } from './data.js'
 import './App.css'
 
 const TABS = [
@@ -24,10 +24,6 @@ export default function App() {
     setTab(id)
     window.history.replaceState(null, '', `#${id}`)
   }
-  const [gateway, setGateway] = useState(initialGateway)
-  const [nodes, setNodes] = useState(initialNodes)
-  const [groups, setGroups] = useState(initialGroups)
-  const [scenes] = useState(initialScenes)
   const [selectedNode, setSelectedNode] = useState(null)
   const [selectedGroup, setSelectedGroup] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -38,32 +34,33 @@ export default function App() {
   const notify = useCallback((message) => {
     clearTimeout(toastTimer.current)
     setToast(message)
-    toastTimer.current = setTimeout(() => setToast(null), 2500)
+    toastTimer.current = setTimeout(() => setToast(null), 3000)
   }, [])
 
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
-  const patchById = (id, patch) => (list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x))
-  const updateNode = (id, patch) => setNodes(patchById(id, patch))
-  const updateGroup = (id, patch) => setGroups(patchById(id, patch))
+  const api = useGateway(notify)
+  const { gateway, nodes, groups, scenes } = api
 
-  // Simulated pull of the latest gateway state.
   const refresh = () => {
     setRefreshing(true)
-    setTimeout(() => {
-      setGateway((g) => ({
-        ...g,
-        runtime: { ...g.runtime, uptimeSeconds: initialGateway.runtime.uptimeSeconds + Math.floor(performance.now() / 1000) },
-      }))
-      setRefreshing(false)
-      notify('Gateway data refreshed')
-    }, 600)
+    api
+      .refresh()
+      .then(() => notify('Gateway data refreshed'))
+      .catch((err) => notify(`Refresh failed: ${err.message}`))
+      .finally(() => setRefreshing(false))
   }
 
-  const runGatewayAction = (label, confirmText) => {
+  // Selecting a node asks the driver for its live state (nodes don't push their own changes).
+  const selectNode = (id) => {
+    setSelectedNode(id)
+    if (nodes.find((n) => n.id === id)?.online) api.requestNodeState([id])
+  }
+
+  const runGatewayAction = (label, confirmText, action) => {
     if (!window.confirm(confirmText)) return
     setBusy(true)
-    notify(`${label} sent to gateway`)
+    action().then(() => notify(`${label} sent to gateway`))
     setTimeout(() => setBusy(false), 3000)
   }
 
@@ -73,7 +70,8 @@ export default function App() {
         <div className="brand">
           <span className="brand-logo"><GridIcon /></span>
           <span className="brand-name">HT-MESH</span>
-          <span className="brand-gateway">Gateway: {gateway.id}</span>
+          <span className="brand-gateway">Gateway: {gateway?.id ?? '—'}</span>
+          {api.mode === 'mock' && <span className="type-tag" title="Not running inside a Control4 Director web tab">Mock data</span>}
         </div>
         <button type="button" className="btn btn-outline" onClick={refresh} disabled={refreshing}>
           <span className={refreshing ? 'spin' : ''}><RefreshIcon /></span> Refresh
@@ -105,14 +103,18 @@ export default function App() {
           <InfoTab
             gateway={gateway}
             busy={busy}
-            onRestart={() => runGatewayAction('Restart', 'Soft-restart the gateway?')}
+            onRestart={() => runGatewayAction('Restart', 'Soft-restart the gateway?', api.restart)}
             onFactoryReset={() =>
-              runGatewayAction('Factory reset', 'Factory reset erases all mesh configuration on the gateway. Continue?')
+              runGatewayAction(
+                'Factory reset',
+                'Factory reset erases all mesh configuration on the gateway. Continue?',
+                api.factoryReset,
+              )
             }
           />
         )}
         {tab === 'nodes' && (
-          <NodesTab nodes={nodes} selectedId={selectedNode} onSelect={setSelectedNode} onUpdate={updateNode} />
+          <NodesTab nodes={nodes} selectedId={selectedNode} onSelect={selectNode} onUpdate={api.controlNode} />
         )}
         {tab === 'groups' && (
           <GroupsTab
@@ -120,10 +122,10 @@ export default function App() {
             nodes={nodes}
             selectedId={selectedGroup}
             onSelect={setSelectedGroup}
-            onUpdate={updateGroup}
+            onUpdate={api.controlGroup}
           />
         )}
-        {tab === 'scenes' && <ScenesTab scenes={scenes} nodes={nodes} notify={notify} />}
+        {tab === 'scenes' && <ScenesTab scenes={scenes} nodes={nodes} onRecall={api.recallScene} notify={notify} />}
       </main>
 
       {toast && <div className="toast" role="status">{toast}</div>}

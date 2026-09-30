@@ -2,7 +2,7 @@ import { typeLabel } from '../devices/index.js'
 import ControlSection from './ControlSection.jsx'
 import EntityCard from './EntityCard.jsx'
 
-const hex = (n) => `0x${n.toString(16).toUpperCase()}`
+const hex = (n) => (typeof n === 'number' ? `0x${n.toString(16).toUpperCase()}` : '—')
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 export default function GroupsTab({ groups, nodes, selectedId, onSelect, onUpdate }) {

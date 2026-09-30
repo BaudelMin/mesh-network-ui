@@ -1,9 +1,10 @@
 import { AlertIcon, RefreshIcon } from './icons.jsx'
 import { Card, Chip, ReadOnly } from './ui.jsx'
 
-const bytes = (n) => `${n.toLocaleString('en-US')} B`
+const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '—')
 
 function formatUptime(total) {
+  if (typeof total !== 'number') return '—'
   const d = Math.floor(total / 86400)
   const h = Math.floor((total % 86400) / 3600)
   const m = Math.floor((total % 3600) / 60)
@@ -13,6 +14,14 @@ function formatUptime(total) {
 }
 
 export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
+  if (!gateway) {
+    return (
+      <Card title="Gateway">
+        <p className="empty">Waiting for gateway data from the driver…</p>
+      </Card>
+    )
+  }
+
   const { identity: id, runtime: rt, network: net, location: loc } = gateway
 
   return (
@@ -51,9 +60,9 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
 
       <Card title="Network">
         <div className="grid-2 fields">
-          <ReadOnly label="WiFi SSID" value={`${net.wifiSsid} · ${net.wifiStatus}`} />
+          <ReadOnly label="WiFi SSID" value={net.wifi} />
           <ReadOnly label="WiFi IP" value={net.wifiIp} />
-          <ReadOnly label="Ethernet" value={`${net.ethernetStatus} · ${net.ethernetIp}`} />
+          <ReadOnly label="Ethernet" value={net.ethernet} />
           <ReadOnly label="mDNS / SDDP host" value={net.host} />
         </div>
       </Card>

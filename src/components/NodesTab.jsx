@@ -20,8 +20,8 @@ export default function NodesTab({ nodes, selectedId, onSelect, onUpdate }) {
             ? [
                 { label: 'Node ID', value: selected.id },
                 { label: 'Type', value: typeLabel(selected.type) },
-                { label: 'Product', value: selected.product },
-                { label: 'MAC', value: selected.mac },
+                { label: 'Product', value: selected.product || '—' },
+                { label: 'MAC', value: selected.mac || '—' },
                 { label: 'Connection', value: selected.online ? 'online' : 'offline' },
               ]
             : []
