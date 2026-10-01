@@ -7,6 +7,19 @@ import ScenesTab from './components/ScenesTab.jsx'
 import { GridIcon, InfoIcon, RefreshIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
 import './App.css'
 
+const PHASES = {
+  offline: { label: 'Offline', title: 'Not running inside a Control4 Director web tab — no data or commands' },
+  connecting: { label: 'Connecting…', title: 'Waiting for the driver to connect to the gateway' },
+  syncing: { label: 'Syncing…', title: 'Requesting the latest data from the driver' },
+  error: { label: 'Sync failed', title: 'The last data request failed — press Refresh to retry' },
+}
+
+const LINKS = {
+  live: { label: 'Live', title: 'Receiving live updates from the driver' },
+  polling: { label: 'Polling', title: 'Live updates unavailable — re-reading the driver every 10 s' },
+  offline: { label: 'Offline', title: 'Cannot reach Director — the data shown may be out of date' },
+}
+
 const TABS = [
   { id: 'info', label: 'Information', icon: InfoIcon },
   { id: 'nodes', label: 'Nodes', icon: SwapIcon },
@@ -40,13 +53,15 @@ export default function App() {
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const api = useGateway(notify)
-  const { gateway, nodes, groups, scenes } = api
+  const { gateway, nodes, groups, scenes, phase, link } = api
+  const loading = phase === 'connecting' || phase === 'syncing'
+  const showLink = phase !== 'offline' && phase !== 'connecting'
 
   const refresh = () => {
     setRefreshing(true)
     api
       .refresh()
-      .then(() => notify('Gateway data refreshed'))
+      .then((message) => notify(message))
       .catch((err) => notify(`Refresh failed: ${err.message}`))
       .finally(() => setRefreshing(false))
   }
@@ -70,11 +85,25 @@ export default function App() {
         <div className="brand">
           <span className="brand-logo"><GridIcon /></span>
           <span className="brand-name">HT-MESH</span>
-          <span className="brand-gateway">Gateway: {gateway?.id ?? '—'}</span>
-          {api.mode === 'mock' && <span className="type-tag" title="Not running inside a Control4 Director web tab">Mock data</span>}
+          <span className="brand-gateway">Gateway: {gateway.id || '—'}</span>
+          {PHASES[phase] && (
+            <span className={`type-tag phase-${phase}`} title={PHASES[phase].title}>
+              {PHASES[phase].label}
+            </span>
+          )}
+          {showLink && (
+            <span className={`type-tag link-${link}`} title={LINKS[link].title}>
+              {LINKS[link].label}
+            </span>
+          )}
         </div>
-        <button type="button" className="btn btn-outline" onClick={refresh} disabled={refreshing}>
-          <span className={refreshing ? 'spin' : ''}><RefreshIcon /></span> Refresh
+        <button
+          type="button"
+          className="btn btn-outline"
+          onClick={refresh}
+          disabled={refreshing || loading || phase === 'offline'}
+        >
+          <span className={refreshing || phase === 'syncing' ? 'spin' : ''}><RefreshIcon /></span> Refresh
         </button>
       </header>
 
@@ -94,8 +123,8 @@ export default function App() {
       </nav>
 
       <div className="banner">
-        Node, group and gateway data update continuously in the background as the gateway reports status. Press{' '}
-        <strong>Refresh</strong> (top right) to pull the latest into this view.
+        Node, group and gateway data update automatically as the gateway reports status. Press{' '}
+        <strong>Refresh</strong> (top right) to re-read everything from the gateway.
       </div>
 
       <main className="content">
@@ -114,18 +143,27 @@ export default function App() {
           />
         )}
         {tab === 'nodes' && (
-          <NodesTab nodes={nodes} selectedId={selectedNode} onSelect={selectNode} onUpdate={api.controlNode} />
+          <NodesTab
+            nodes={nodes}
+            loading={loading}
+            selectedId={selectedNode}
+            onSelect={selectNode}
+            onUpdate={api.controlNode}
+          />
         )}
         {tab === 'groups' && (
           <GroupsTab
             groups={groups}
+            loading={loading}
             nodes={nodes}
             selectedId={selectedGroup}
             onSelect={setSelectedGroup}
             onUpdate={api.controlGroup}
           />
         )}
-        {tab === 'scenes' && <ScenesTab scenes={scenes} nodes={nodes} onRecall={api.recallScene} notify={notify} />}
+        {tab === 'scenes' && (
+          <ScenesTab scenes={scenes} nodes={nodes} loading={loading} onRecall={api.recallScene} notify={notify} />
+        )}
       </main>
 
       {toast && <div className="toast" role="status">{toast}</div>}

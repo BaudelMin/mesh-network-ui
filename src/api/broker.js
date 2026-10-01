@@ -19,7 +19,10 @@
 (function (global) {
   'use strict';
 
-  Broker.log = null;
+  // ?debug=1 in the tab URL traces every REST call and socket event to the console.
+  Broker.log = getQueryParam('debug') === '1'
+    ? function (scope, message, detail) { console.debug('[' + scope + ']', message, detail === undefined ? '' : detail); }
+    : null;
 
   /**
    * log(scope, message, detail)
@@ -30,6 +33,16 @@
     if (typeof Broker.log === 'function') {
       Broker.log(scope, message, detail);
     }
+  }
+
+  /**
+   * warn(scope, message, detail)
+   * Like log(), but also always written to console.warn — used for events
+   * that mean live updates may be lost (subscribe failed, disconnect, ...).
+   */
+  function warn(scope, message, detail) {
+    console.warn('[' + scope + ']', message, detail === undefined ? '' : detail);
+    log(scope, message, detail);
   }
 
   // -- Minimal replay-subject (no RxJS dependency available in this webview) --
@@ -96,10 +109,11 @@
    *
    * options.subscribeVariables — falsy to disable the real-time layer entirely
    *   (REST-only: getProperties/setProperty/executeAction/executeCommand still
-   *   work); or an object { pollVariablesPeriod: <ms> } to open the Socket.IO
-   *   connection and start pushing live property/variable updates. When set,
-   *   the variables subscription self-heals: if no message arrives within
-   *   pollVariablesPeriod it tears down and resubscribes.
+   *   work); truthy to open the Socket.IO connection and start pushing live
+   *   property/variable updates. After every Socket.IO reconnect both
+   *   subscriptions are rebuilt and the variables re-read (pollVariables).
+   *   The live push can still miss updates — callers that must stay current
+   *   should also call pollVariables() periodically.
    *
    * Reads apihost/driverid/apitoken from the page's query string (the
    * Director iframe is expected to inject these) and throws immediately if
@@ -127,9 +141,14 @@
     this.allPropertiesObservable = new ReplaySubject1(this.properties, true);
     this.variablesObservable = new ReplaySubject1([], true);
     this.readySubject = new Subject();
+    // true while the socket is connected and the variables subscription is active.
+    this.liveObservable = new ReplaySubject1(false, true);
 
     this._socket = null;
     this._subscriptionInit = null;
+    this._varSub = null;
+    this._propSub = null;
+    this._polledNames = null;
 
     log('broker', 'constructed', { apihost: this.apihost, id: this.id });
     this.init();
@@ -155,7 +174,7 @@
         self.subscribeVariables();
         self.subscribeProperties();
       }).catch(function (err) {
-        log('broker', 'init: subscription setup failed', err.message);
+        warn('broker', 'init: subscription setup failed', err.message);
       });
     }
   };
@@ -171,7 +190,10 @@
     var self = this;
     if (this._socket && this._socket.connected) return Promise.resolve();
     return new Promise(function (resolve) {
-      self.readySubject.subscribe(function () { resolve(); });
+      var handle = self.readySubject.subscribe(function () {
+        handle.unsubscribe();
+        resolve();
+      });
     });
   };
 
@@ -190,13 +212,14 @@
    * - Adds the bearer token automatically.
    * - JSON-encodes `body` for any non-GET method.
    * - Aborts via AbortController if `timeoutMs` is given.
-   * - On a non-ok response, runs _handleAPIError (alerts + logs) and rejects.
+   * - On a non-ok response, runs _handleAPIError (alerts + logs) and rejects;
+   *   pass `quiet` to skip the alert (background polling).
    * - Parses the response as JSON when the content-type says so, otherwise
    *   returns plain text.
    * Returns a Promise. You generally call the higher-level wrapper methods
    * below instead of this directly.
    */
-  Broker.prototype.call = function (method, path, body, timeoutMs) {
+  Broker.prototype.call = function (method, path, body, timeoutMs, quiet) {
     var self = this;
     var hasBody = method !== 'GET' && body !== undefined;
     var opts = { method: method, headers: this._headers(hasBody) };
@@ -214,7 +237,7 @@
     return fetch(this.urlPrefix + path, opts).then(function (res) {
       if (timeoutId) clearTimeout(timeoutId);
       if (!res.ok) {
-        return self._handleAPIError(method, path, res).then(function () {
+        return self._handleAPIError(method, path, res, quiet).then(function () {
           throw new Error(method + ' ' + path + ' failed (' + res.status + ')');
         });
       }
@@ -232,13 +255,17 @@
    * Called by call() whenever a REST response is not ok. Reads the response
    * body as text, builds a readable message (appending a session-expired
    * hint on HTTP 401), logs it, and shows a browser alert() — matching the
-   * reference app's handleAPIError behavior.
+   * reference app's handleAPIError behavior — unless `quiet` is set.
    */
-  Broker.prototype._handleAPIError = function (method, path, res) {
+  Broker.prototype._handleAPIError = function (method, path, res, quiet) {
     return res.text().then(function (body) {
       var message = method + ' ' + path + ' failed (' + res.status + '): ' + body;
       if (res.status === 401) {
         message += ' — Session expired. Please restart Composer Pro.';
+      }
+      if (quiet) {
+        warn('broker', 'API ERROR', message);
+        return;
       }
       log('broker', 'API ERROR', message);
       global.alert(message);
@@ -343,10 +370,31 @@
    *   [{ id, varName, type, value, variableId, name, roomName, ... }]
    * (this is a Control4 device Variable — created in Lua via C4:AddVariable
    *  and updated via C4:SetVariable — not a driver.xml <property>).
+   * `opts` = { timeoutMs, quiet } is passed through to call().
    */
-  Broker.prototype.getDeviceVariables = function (id, varnames) {
+  Broker.prototype.getDeviceVariables = function (id, varnames, opts) {
+    opts = opts || {};
     var qs = (varnames && varnames.length) ? '?varnames=' + encodeURIComponent(varnames.join(',')) : '';
-    return this.call('GET', '/api/v1/items/' + id + '/variables' + qs);
+    return this.call('GET', '/api/v1/items/' + id + '/variables' + qs, undefined, opts.timeoutMs, opts.quiet);
+  };
+
+  /**
+   * pollVariables(names, opts)
+   * VARIABLE RETRIEVE (REST → observables). Reads this driver's variables and
+   * feeds each one through _applyVariable, so getVariableObservable(name) and
+   * getVariablesObservable() converge even when the live push is down.
+   * `names` defaults to the names of the previous call (all variables if never
+   * given). opts = { force, timeoutMs, quiet }: `force` re-emits values that
+   * did not change (use it for an explicit Refresh).
+   */
+  Broker.prototype.pollVariables = function (names, opts) {
+    var self = this;
+    opts = opts || {};
+    if (names) this._polledNames = names;
+    return this.getDeviceVariables(this.id, this._polledNames, opts).then(function (vars) {
+      (vars || []).forEach(function (v) { self._applyVariable(v, opts.force); });
+      return vars;
+    });
   };
 
   /**
@@ -463,6 +511,11 @@
     return this.variablesObservable;
   };
 
+  /** getLiveObservable() — ReplaySubject1 of true while live variable pushes are flowing. */
+  Broker.prototype.getLiveObservable = function () {
+    return this.liveObservable;
+  };
+
   // -- localStorage property cache -------------------------------------------
 
   /** _cacheKey() — localStorage key this Broker's property cache is stored under. */
@@ -526,20 +579,29 @@
           timeout: 10000
         });
 
+        var firstConnect = true;
         self._socket.on('connect', function () {
-          log('broker', 'socket connected', self._socket.id);
           self.readySubject.next(true);
-          self.readySubject.complete();
-          resolve();
+          if (firstConnect) {
+            firstConnect = false;
+            log('broker', 'socket connected', self._socket.id);
+            resolve();
+            return;
+          }
+          // Director subscriptions belong to the old socket id — rebuild them.
+          warn('broker', 'socket reconnected, re-subscribing', self._socket.id);
+          self.subscribeVariables();
+          self.subscribeProperties();
         });
         self._socket.on('connect_error', function (err) {
-          log('broker', 'socket connect_error', err && err.message);
+          warn('broker', 'socket connect_error', err && err.message);
         });
         self._socket.on('disconnect', function (reason) {
-          log('broker', 'socket disconnected', reason);
+          self.liveObservable.next(false);
+          warn('broker', 'socket disconnected', reason);
         });
       }).catch(function (err) {
-        log('broker', 'initSubscription failed', err.message);
+        warn('broker', 'initSubscription failed', err.message);
         reject(err);
       });
     });
@@ -562,14 +624,19 @@
    * socket topic. You rarely need this directly; use subscribeItemOnDataToUI/
    * subscribeOnDataToUI, or rely on subscribeVariables/subscribeProperties
    * (started automatically by init()).
+   * `onActive(ok)` (optional) is called once the subscription is running
+   * (true) or has failed to start (false).
    */
-  Broker.prototype.subscribe = function (path, params) {
+  Broker.prototype.subscribe = function (path, params, onActive) {
     var self = this;
     var subject = new Subject();
     var subscriptionId = null;
     var active = false;
+    var cancelled = false;
+    var report = function (ok) { if (onActive && !cancelled) onActive(ok); };
 
     this.whenReady().then(function () {
+      if (cancelled) return null;
       var qs = 'SubscriptionClient=' + encodeURIComponent(self._socket.id);
       if (params) {
         Object.keys(params).forEach(function (key) {
@@ -578,17 +645,22 @@
       }
       return self.call('GET', path + '?' + qs);
     }).then(function (res) {
+      // Unsubscribed while the GET was in flight — don't start a topic nobody ends.
+      if (cancelled) return;
       subscriptionId = res && res.subscriptionId;
       if (!subscriptionId) {
-        log('broker', 'subscribe: no subscriptionId returned', path);
+        warn('broker', 'subscribe: no subscriptionId returned', path);
+        report(false);
         return;
       }
       active = true;
       self._socket.on(subscriptionId, function (msg) { subject.next(msg); });
       self._socket.emit('startSubscription', subscriptionId);
       log('broker', 'subscribed', path + ' -> ' + subscriptionId);
+      report(true);
     }).catch(function (err) {
-      log('broker', 'subscribe failed: ' + path, err.message);
+      warn('broker', 'subscribe failed: ' + path, err.message);
+      report(false);
     });
 
     var baseSubscribe = subject.subscribe.bind(subject);
@@ -597,6 +669,7 @@
       return {
         unsubscribe: function () {
           sub.unsubscribe();
+          cancelled = true;
           if (active && subscriptionId) {
             self._socket.emit('endSubscription', subscriptionId);
             self._socket.off(subscriptionId);
@@ -635,42 +708,49 @@
    * this driver's /variables topic. Every pushed message (shape: { varName,
    * value, ... } — see getDeviceVariables()) is merged into
    * getVariablesObservable()'s array and forwarded to that variable's own
-   * getVariableObservable(varName). If options.subscribeVariables.pollVariablesPeriod
-   * is set, self-heals: if no message arrives within that window, tears the
-   * subscription down and re-subscribes. Started automatically by init()
-   * when options.subscribeVariables is truthy — you don't normally call
-   * this yourself.
+   * getVariableObservable(varName). Safe to call again (init() does, and so
+   * does every Socket.IO reconnect): the previous subscription is ended
+   * first, and the variables are re-read so changes made while there was no
+   * subscription are not lost. Drives liveObservable.
    */
   Broker.prototype.subscribeVariables = function () {
     var self = this;
-    var sub = this.subscribe('/api/v1/items/' + this.id + '/variables');
-    var lastMessageAt = Date.now();
+    if (this._varSub) this._varSub.unsubscribe();
+    this.liveObservable.next(false);
 
-    sub.subscribe(function (msg) {
-      lastMessageAt = Date.now();
-      if (!msg || !msg.varName) return;
-      var vars = self.variablesObservable.value.slice();
-      var idx = -1;
-      for (var i = 0; i < vars.length; i++) {
-        if (vars[i].varName === msg.varName) { idx = i; break; }
-      }
-      if (idx !== -1) vars[idx] = msg; else vars.push(msg);
-      self.variablesObservable.next(vars);
-      self.getVariableObservable(msg.varName).next(msg);
+    var handle = null;
+    var subject = this.subscribe('/api/v1/items/' + this.id + '/variables', null, function (ok) {
+      if (self._varSub === handle) self.liveObservable.next(ok && !!self._socket && self._socket.connected);
     });
+    handle = subject.subscribe(function (msg) { self._applyVariable(msg); });
+    this._varSub = handle;
 
-    var pollPeriod = this.options.subscribeVariables && this.options.subscribeVariables.pollVariablesPeriod;
-    if (pollPeriod) {
-      global.setInterval(function () {
-        if (Date.now() - lastMessageAt > pollPeriod) {
-          log('broker', 'variables subscription stale, re-subscribing');
-          sub.unsubscribe();
-          self.subscribeVariables();
-        }
-      }, pollPeriod);
+    // Backfill anything missed while we had no subscription.
+    this.pollVariables(null, { quiet: true }).catch(function (err) {
+      warn('broker', 'variables backfill failed', err.message);
+    });
+    return handle;
+  };
+
+  /**
+   * _applyVariable(msg, force)
+   * Internal. Merges one { varName, value, ... } variable (pushed or polled)
+   * into getVariablesObservable()'s array and its getVariableObservable(varName).
+   * A value equal to the one already held is dropped (push and polling both
+   * deliver it) unless `force` is set.
+   */
+  Broker.prototype._applyVariable = function (msg, force) {
+    if (!msg || !msg.varName) return;
+    var observable = this.getVariableObservable(msg.varName);
+    if (!force && observable._hasValue && observable.value && observable.value.value === msg.value) return;
+    var vars = this.variablesObservable.value.slice();
+    var idx = -1;
+    for (var i = 0; i < vars.length; i++) {
+      if (vars[i].varName === msg.varName) { idx = i; break; }
     }
-
-    return sub;
+    if (idx !== -1) vars[idx] = msg; else vars.push(msg);
+    this.variablesObservable.next(vars);
+    observable.next(msg);
   };
 
   /**
@@ -681,12 +761,14 @@
    * is applied via _applyPropertyUpdate so every getPropertyObservable(name)
    * stays current without polling. Started automatically by init() when
    * options.subscribeVariables is truthy (the same real-time layer backs
-   * both properties and variables).
+   * both properties and variables). Safe to call again: the previous
+   * subscription is ended first.
    */
   Broker.prototype.subscribeProperties = function () {
     var self = this;
-    var sub = this.subscribe('/api/v1/items/' + this.id + '/properties');
-    sub.subscribe(function (msg) {
+    if (this._propSub) this._propSub.unsubscribe();
+    var subject = this.subscribe('/api/v1/items/' + this.id + '/properties');
+    this._propSub = subject.subscribe(function (msg) {
       var cmd = msg && msg.devicecommand && msg.devicecommand.command;
       if (cmd === 'UPDATE_PROPERTY' || cmd === 'UPDATE_PROPERTY_ATTRIBS') {
         self._applyPropertyUpdate(msg.devicecommand);
@@ -694,7 +776,7 @@
         (msg.devicecommand.properties || []).forEach(function (p) { self._applyPropertyUpdate(p); });
       }
     });
-    return sub;
+    return this._propSub;
   };
 
   /**

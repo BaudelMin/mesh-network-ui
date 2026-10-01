@@ -2,94 +2,147 @@
  * Map the Lua driver's variables (shapes in lua_requirement.md) to UI state.
  * State values are already in panel ranges — hue 0–360, saturation/lightness 0–100.
  * Fields a node doesn't report for its mode stay undefined and are hidden in the UI.
+ *
+ * Every adapter always returns a complete value: an empty or unparseable variable
+ * (delivered as null), a missing section or a missing field falls back to the
+ * EMPTY_* defaults below, so components never have to null-check.
  */
 
 const num = (v) => (typeof v === 'number' ? v : undefined)
+const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
+const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
+const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : [])
+const ids = (v) => (Array.isArray(v) ? v.map(str).filter(Boolean) : [])
+
+export const EMPTY_LIGHT_STATE = {
+  on: undefined,
+  brightness: undefined,
+  masterBrightness: undefined,
+  cct: undefined,
+  cctBrightness: undefined,
+  hsl: undefined,
+}
 
 function lightState(state) {
-  const s = state || {}
+  const s = obj(state)
   const hasHsl = [s.hue, s.saturation, s.lightness].some((v) => typeof v === 'number')
   return {
-    on: s.onoff === undefined ? undefined : s.onoff === 1,
+    ...EMPTY_LIGHT_STATE,
+    on: s.onoff === undefined ? undefined : s.onoff === 1 || s.onoff === true,
     brightness: num(s.brightness),
     masterBrightness: num(s.master_brightness),
     cct: num(s.cct),
     cctBrightness: num(s.cct_brightness),
-    hsl: hasHsl ? { h: s.hue ?? 0, s: s.saturation ?? 0, l: s.lightness ?? 0 } : undefined,
+    hsl: hasHsl ? { h: num(s.hue) ?? 0, s: num(s.saturation) ?? 0, l: num(s.lightness) ?? 0 } : undefined,
   }
 }
 
+// Shown before any gateway data arrives (or when Information is empty): every field blank.
+// `available` is false until Information holds a Gateway.INFO result.
+export const EMPTY_GATEWAY = {
+  available: false,
+  id: '',
+  identity: {
+    name: '', productId: '', manufacturer: '', mac: '', chipOs: '', fwHw: '', serial: '', manufactured: '',
+    provisioned: false, bleMesh: false,
+  },
+  runtime: { uptimeSeconds: undefined, freeHeap: undefined, freeIram: undefined, freePsram: undefined },
+  network: { wifi: '', wifiIp: '', ethernet: '', host: '' },
+  location: { region: '', timezone: '', coordinates: '', address: '' },
+}
+
+export const EMPTY_NODES = []
+export const EMPTY_GROUPS = []
+export const EMPTY_SCENES = []
+
+// `info` and `status` are read independently: either may be empty without
+// blanking the other (e.g. a Gateway.STATUS push before the first Gateway.INFO).
 export function toGateway(data) {
-  const info = data?.info || {}
-  const status = data?.status || {}
-  const wifi = info.network?.wifi || {}
-  const eth = info.network?.ethernet || {}
-  const loc = info.location || {}
-  const join = (...parts) => parts.filter(Boolean).join(' · ') || '—'
-  const coords = typeof loc.latitude === 'number' ? `${loc.latitude}, ${loc.longitude}` : '—'
+  const d = obj(data)
+  const info = obj(d.info)
+  const status = obj(d.status)
+  const memory = obj(status.memory)
+  const network = obj(info.network)
+  const wifi = obj(network.wifi)
+  const eth = obj(network.ethernet)
+  const loc = obj(info.location)
+  const join = (...parts) => parts.filter(Boolean).join(' · ')
+  const available = Object.keys(info).length > 0
+  const fw = str(info.fw_version)
+  const commit = str(info.commit_hash)
 
   return {
-    id: info.gateway_id || info.name || '—',
+    available,
+    id: str(info.gateway_id) || str(info.name),
     identity: {
-      name: info.name || '—',
-      productId: info.product_id || '—',
-      manufacturer: info.manufacturer || '—',
-      mac: info.mac || '—',
-      chipOs: join(info.chip, info.os),
-      fwHw: join(info.fw_version && `${info.fw_version}${info.commit_hash ? ` (${info.commit_hash})` : ''}`, info.hw_version),
-      serial: info.serial || '—',
-      manufactured: info.date_of_manufacture || '—',
+      name: str(info.name),
+      productId: str(info.product_id),
+      manufacturer: str(info.manufacturer),
+      mac: str(info.mac),
+      chipOs: join(str(info.chip), str(info.os)),
+      fwHw: join(fw && `${fw}${commit ? ` (${commit})` : ''}`, str(info.hw_version)),
+      serial: str(info.serial),
+      manufactured: str(info.date_of_manufacture),
       provisioned: Boolean(status.gw_provisioned ?? info.gw_provisioned),
       bleMesh: Boolean(status.bleEnabled ?? info.bleEnabled),
     },
     runtime: {
       // Gateway.STATUS reports uptime in microseconds.
       uptimeSeconds: typeof status.uptime === 'number' ? Math.floor(status.uptime / 1e6) : undefined,
-      freeHeap: status.memory?.free_heap,
-      freeIram: status.memory?.free_iram,
-      freePsram: status.memory?.free_psram,
+      freeHeap: num(memory.free_heap),
+      freeIram: num(memory.free_iram),
+      freePsram: num(memory.free_psram),
     },
-    network: {
-      wifi: wifi.ssid ? join(wifi.ssid, wifi.connected ? 'connected' : 'disconnected') : 'not connected',
-      wifiIp: wifi.ip || '—',
-      ethernet: eth.connected ? join('connected', eth.ip) : 'not connected',
-      host: info.network?.discovery_method?.mdns?.hostname || '—',
-    },
+    network: available
+      ? {
+          wifi: wifi.ssid ? join(str(wifi.ssid), wifi.connected ? 'connected' : 'disconnected') : 'not connected',
+          wifiIp: str(wifi.ip),
+          ethernet: eth.connected ? join('connected', str(eth.ip)) : 'not connected',
+          host: str(obj(obj(network.discovery_method).mdns).hostname),
+        }
+      : { ...EMPTY_GATEWAY.network },
     location: {
-      region: loc.region || '—',
-      timezone: loc.timezone || '—',
-      coordinates: coords,
-      address: loc.address || '—',
+      region: str(loc.region),
+      timezone: str(loc.timezone),
+      coordinates: typeof loc.latitude === 'number' && typeof loc.longitude === 'number' ? `${loc.latitude}, ${loc.longitude}` : '',
+      address: str(loc.address),
     },
   }
 }
 
-export const toNodes = (list) =>
-  (Array.isArray(list) ? list : []).map((n) => ({
-    id: n.id,
-    name: n.name || n.id,
-    mac: n.mac,
-    product: n.product_id,
-    type: n.dev_type || 'light',
-    online: Boolean(n.is_alive),
-    mode: num(n.mode),
-    ...lightState(n.state),
-  }))
+// Entries without an id can't be addressed by a command, so they are dropped.
+export const toNodes = (data) =>
+  list(data)
+    .map((n) => ({
+      id: str(n.id),
+      name: str(n.name) || str(n.id),
+      mac: str(n.mac),
+      product: str(n.product_id),
+      type: str(n.dev_type) || 'light',
+      online: Boolean(n.is_alive),
+      mode: num(n.mode),
+      ...lightState(n.state),
+    }))
+    .filter((n) => n.id)
 
-export const toGroups = (list) =>
-  (Array.isArray(list) ? list : []).map((g) => ({
-    id: g.group_id,
-    name: g.group_name || g.group_id,
-    address: num(g.group_addr),
-    type: g.type || 'light',
-    members: Array.isArray(g.nodes) ? g.nodes : [],
-    ...lightState(g.state),
-  }))
+export const toGroups = (data) =>
+  list(data)
+    .map((g) => ({
+      id: str(g.group_id),
+      name: str(g.group_name) || str(g.group_id),
+      address: num(g.group_addr),
+      type: str(g.type) || 'light',
+      members: ids(g.nodes),
+      ...lightState(g.state),
+    }))
+    .filter((g) => g.id)
 
-export const toScenes = (list) =>
-  (Array.isArray(list) ? list : []).map((s) => ({
-    id: s.scene_id,
-    name: s.scene_name || s.scene_id,
-    number: num(s.scene_number),
-    members: Array.isArray(s.nodes) ? s.nodes : [],
-  }))
+export const toScenes = (data) =>
+  list(data)
+    .map((s) => ({
+      id: str(s.scene_id),
+      name: str(s.scene_name) || str(s.scene_id),
+      number: num(s.scene_number),
+      members: ids(s.nodes),
+    }))
+    .filter((s) => s.id)

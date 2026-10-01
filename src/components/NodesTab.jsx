@@ -2,7 +2,7 @@ import { typeLabel } from '../devices/index.js'
 import ControlSection from './ControlSection.jsx'
 import EntityCard from './EntityCard.jsx'
 
-export default function NodesTab({ nodes, selectedId, onSelect, onUpdate }) {
+export default function NodesTab({ nodes, loading, selectedId, onSelect, onUpdate }) {
   const selected = nodes.find((n) => n.id === selectedId) ?? null
   const online = nodes.filter((n) => n.online).length
 
@@ -14,7 +14,9 @@ export default function NodesTab({ nodes, selectedId, onSelect, onUpdate }) {
         target={selected}
         online={selected?.online}
         disabledNote={selected && !selected.online ? 'This node is offline — controls are disabled.' : null}
-        emptyText={nodes.length ? 'Select a node from the list below to control it.' : 'No nodes available.'}
+        emptyText={
+          nodes.length ? 'Select a node from the list below to control it.' : loading ? 'Loading nodes…' : 'No nodes available.'
+        }
         info={
           selected
             ? [
@@ -37,7 +39,7 @@ export default function NodesTab({ nodes, selectedId, onSelect, onUpdate }) {
         </header>
 
         {nodes.length === 0 ? (
-          <p className="empty">No nodes provisioned yet.</p>
+          <p className="empty">{loading ? 'Loading nodes…' : 'No nodes provisioned yet.'}</p>
         ) : (
           <div className="entity-grid">
             {nodes.map((node) => (

@@ -1,13 +1,13 @@
 import { PlayIcon } from './icons.jsx'
 import { Card, Chip } from './ui.jsx'
 
-export default function ScenesTab({ scenes, nodes, onRecall, notify }) {
+export default function ScenesTab({ scenes, nodes, loading, onRecall, notify }) {
   const nodeName = (id) => nodes.find((n) => n.id === id)?.name ?? id
 
   return (
     <Card title="Scenes" subtitle="Scenes stored on-device via the BLE Mesh Scene model. Recall applies the saved state to every registered node.">
       {scenes.length === 0 ? (
-        <p className="empty">No scenes configured.</p>
+        <p className="empty">{loading ? 'Loading scenes…' : 'No scenes configured.'}</p>
       ) : (
         <div className="grid-2">
           {scenes.map((s) => (

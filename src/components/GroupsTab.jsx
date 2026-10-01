@@ -5,7 +5,7 @@ import EntityCard from './EntityCard.jsx'
 const hex = (n) => (typeof n === 'number' ? `0x${n.toString(16).toUpperCase()}` : '—')
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-export default function GroupsTab({ groups, nodes, selectedId, onSelect, onUpdate }) {
+export default function GroupsTab({ groups, nodes, loading, selectedId, onSelect, onUpdate }) {
   const selected = groups.find((g) => g.id === selectedId) ?? null
   const nodeName = (id) => nodes.find((n) => n.id === id)?.name ?? id
 
@@ -15,7 +15,9 @@ export default function GroupsTab({ groups, nodes, selectedId, onSelect, onUpdat
         title="Group Control"
         subtitle="Group commands — broadcast to the group address, all members update simultaneously."
         target={selected}
-        emptyText={groups.length ? 'Select a group from the list below to control it.' : 'No groups available.'}
+        emptyText={
+          groups.length ? 'Select a group from the list below to control it.' : loading ? 'Loading groups…' : 'No groups available.'
+        }
         info={
           selected
             ? [
@@ -35,7 +37,7 @@ export default function GroupsTab({ groups, nodes, selectedId, onSelect, onUpdat
         </header>
 
         {groups.length === 0 ? (
-          <p className="empty">No groups configured.</p>
+          <p className="empty">{loading ? 'Loading groups…' : 'No groups configured.'}</p>
         ) : (
           <div className="entity-grid">
             {groups.map((g) => (

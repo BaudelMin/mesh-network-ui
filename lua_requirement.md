@@ -15,8 +15,10 @@ Source of truth for the gateway protocol: *HTMesh Gateway API Reference* (xwiki,
                   live over Socket.IO                         pushes
 ```
 
-- **Panel → driver:** one Lua command, `HTMESH_RPC`, whose params are `{ command, params }`.
-- **Driver → panel:** five C4 variables holding JSON strings. The panel subscribes to them live and re-reads them when the user presses Refresh.
+- **Panel → driver:** two Lua commands:
+  - `HTMESH_RPC`, with params `{ command, params }`, for gateway commands (§3)
+  - `HTMESH_SYNC`, with no params, which asks the driver to rewrite every data variable (§3a)
+- **Driver → panel:** five C4 variables holding JSON strings. The panel subscribes to them live over Socket.IO, re-subscribes after every Socket.IO reconnect, and also re-reads them over REST every 10 s while the tab is visible. The live push only speeds updates up: even with a dead socket the tab is at most 10 s behind the variables.
 - **Units:** the panel always sends and expects **panel ranges**. The driver converts to and from wire ranges (§5).
 
 ## 2. Driver setup
@@ -35,7 +37,7 @@ The WebSocket URI is `ws://<Gateway IP>:<Gateway Port>/rpc/wss`. Reconnect whene
 - Build the panel with `npm run build`, and copy the contents of `dist/` into the driver's `www/` folder.
 - Declare it as a tab, e.g. `<tab name="HT-Mesh" file="www/index.html"/>`.
 - The build uses relative asset paths (`base: './'`), so it works from any folder.
-- Director must open the tab with `apihost`, `driverid` and `apitoken` in the query string. Without them the panel falls back to mock data.
+- Director must open the tab with `apihost`, `driverid` and `apitoken` in the query string. Without them the panel shows **Offline**, with no data and every command disabled.
 
 ### Variables (created in Lua, e.g. `ON_DRIVER_INIT`)
 
@@ -49,7 +51,21 @@ C4:AddVariable("Command Status", "{}", "STRING")
 
 The names must match exactly (`src/api/client.js` → `VARIABLES`). Every value is a JSON string; the shapes are in §6.
 
-No driver.xml `<actions>` are needed: the panel calls `HTMESH_RPC` through `executeCommand`, which goes straight to `ExecuteCommand`.
+No driver.xml `<actions>` are needed: the panel calls `HTMESH_RPC` and `HTMESH_SYNC` through `executeCommand`, which goes straight to `ExecuteCommand`.
+
+### Empty values
+
+When there is no data for a variable, the driver must still write it, using the empty value:
+
+| Variable         | Empty value |
+| ---------------- | ----------- |
+| `Information`    | `{}`        |
+| `Nodes`          | `[]`        |
+| `Groups`         | `[]`        |
+| `Scenes`         | `[]`        |
+| `Command Status` | `{}`        |
+
+Examples: the gateway isn't connected, has no nodes or groups yet, or a query failed. The panel treats an empty value, an empty string, or invalid JSON as "no data", and shows "No gateway data available", "No nodes provisioned yet", and so on. Never leave stale data in a variable after the gateway reports that data is gone.
 
 ## 3. Command entry point: `HTMESH_RPC`
 
@@ -75,6 +91,34 @@ The driver must:
 5. Remember `id → { command, target }` so the immediate response can be matched to it.
 
 The panel already validates required params and ranges (`src/api/commands.js`), but the driver should validate again before sending.
+
+## 3a. Data sync entry point: `HTMESH_SYNC`
+
+The panel calls:
+
+```js
+broker.executeCommand('HTMESH_SYNC', {})
+```
+
+It does this at two times:
+
+- **On page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `HTMESH_SYNC`. Until then its header shows *Connecting…*.
+- **On Refresh:** every press of the top-right **Refresh** button sends it again.
+
+The panel then waits for a `Command Status` with `command` = `"HTMESH_SYNC"` and a `seq` newer than the one it held before sending (§6). It waits up to **20 seconds**. Then it re-reads all five variables through the REST API, so it shows the synced data and not the data from before the sync. The status `message` is shown as a toast. If no status arrives within 20 s, the panel re-reads the variables anyway and shows "gateway slow to answer".
+
+The driver must, on `HTMESH_SYNC`:
+
+1. **If the gateway WebSocket is connected**, queue the full data refresh (the same requests as the startup sync in §9, steps 2–6 plus 8):
+   - `Gateway.INFO` and `Gateway.STATUS` → `Information`
+   - `Gateway.NODES` (plus `Node.STATE` for alive nodes) → `Nodes`
+   - `Gateway.GROUPS` → `Groups`
+   - `Gateway.SCENES` → `Scenes`
+2. **When each part completes, write its variable, even if the content is unchanged.** Write the empty value (§2) if the gateway returned nothing, or if the request failed.
+3. **When the last part completes, report the outcome** in `Command Status` with `command` = `"HTMESH_SYNC"` and `target` = `""`. If every part succeeded, use `code` `0` and the message `"gateway data refreshed"`. If any part failed, use `38422` and a message such as `"1 of 4 gateway reads failed"`.
+4. **If the gateway is not connected**, immediately write the empty value to `Information`, `Nodes`, `Groups` and `Scenes`. Then report `HTMESH_SYNC` with `code` `-1` and the message `"gateway not connected"`, so the panel stops waiting, and start a reconnect (§9).
+5. Return from `ExecuteCommand` right away. Don't block on gateway responses; the panel picks up the results from the variables.
+6. If several `HTMESH_SYNC` calls arrive while a sync is running, merge them into one. Don't queue duplicate `Gateway.*` reads. The one completion status answers all of them.
 
 ## 4. Commands the panel sends
 
@@ -215,6 +259,7 @@ This is the outcome of the last command, shown to the user as a toast:
 
 - `seq` must **strictly increase** on every update, including across driver restarts; for example, use `os.time() * 1000 + counter`. The panel ignores the value that exists when the page loads, then toasts each newer `seq`.
 - `code` is `0` for success. Anything else is shown as a failure, using `message`.
+- A sync completion uses `command` = `"HTMESH_SYNC"` and `target` = `""` (§3a). For example: `{ "seq": 1727700000456, "command": "HTMESH_SYNC", "target": "", "code": 0, "message": "gateway data refreshed" }`. The panel shows it as the Refresh result, not as a separate command toast.
 
 ## 7. Sending: queue and concurrency
 
@@ -256,7 +301,7 @@ How to recognise the final push for each command:
 | `Gateway.NETWORK.STATUS`                   | Update `Information.info.network.wifi` |
 | `Gateway.REMOVE.STATUS` (removed: true)    | Remove that node from `Nodes` (a removal done from the mobile app) |
 
-Write each variable only when its content changes, so the panel doesn't re-render for nothing.
+Outside `HTMESH_SYNC`, write a variable only when its content changes, so the panel doesn't re-render for nothing. During a sync, always write every variable (§3a).
 
 Useful error codes to put in `message` (full table in the API reference):
 
@@ -294,13 +339,14 @@ Useful error codes to put in `message` (full table in the API reference):
 
 Polls go through the same queue, behind any user command.
 
-**Reconnect** with backoff (for example 2 s, 5 s, 10 s, then every 30 s) after a disconnect: `Gateway.RESTART`, `Gateway.NETWORK`, a gateway OTA, or a network drop. While disconnected, set every node's `is_alive` to `false` in `Nodes`, so the panel disables their controls.
+**Reconnect** with backoff (for example 2 s, 5 s, 10 s, then every 30 s) after a disconnect: `Gateway.RESTART`, `Gateway.NETWORK`, a gateway OTA, or a network drop. While disconnected, set every node's `is_alive` to `false` in `Nodes`, so the panel disables their controls. An `HTMESH_SYNC` received while disconnected writes empty values instead (§3a).
 
 ## 10. Checklist
 
 - [ ] Properties `Gateway IP` and `Gateway Port`, with a WebSocket client to `ws://<ip>:<port>/rpc/wss`
 - [ ] Variables `Information`, `Nodes`, `Groups`, `Scenes`, `Command Status` created as STRING
 - [ ] `ExecuteCommand("HTMESH_RPC")`: decode `params`, check the allowlist (§4), convert (§5), queue
+- [ ] `ExecuteCommand("HTMESH_SYNC")`: full refresh that always writes all four data variables, using empty values when there's no data (§3a)
 - [ ] Request `id` counter and a pending-request table
 - [ ] Serialized queue with the final-push detection in §7, a 0x9618 retry, and coalescing of control commands
 - [ ] Wire → panel conversion on every HSL value written to variables

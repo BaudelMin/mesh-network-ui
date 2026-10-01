@@ -1,10 +1,10 @@
 import { AlertIcon, RefreshIcon } from './icons.jsx'
 import { Card, Chip, ReadOnly } from './ui.jsx'
 
-const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '—')
+const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '')
 
 function formatUptime(total) {
-  if (typeof total !== 'number') return '—'
+  if (typeof total !== 'number') return ''
   const d = Math.floor(total / 86400)
   const h = Math.floor((total % 86400) / 3600)
   const m = Math.floor((total % 3600) / 60)
@@ -13,16 +13,10 @@ function formatUptime(total) {
   return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`
 }
 
+// Without gateway data every card keeps its labels and shows blank values (EMPTY_GATEWAY).
 export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
-  if (!gateway) {
-    return (
-      <Card title="Gateway">
-        <p className="empty">Waiting for gateway data from the driver…</p>
-      </Card>
-    )
-  }
-
   const { identity: id, runtime: rt, network: net, location: loc } = gateway
+  const actionsDisabled = busy || !gateway.available
 
   return (
     <div className="grid-2">
@@ -82,10 +76,10 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
         subtitle="Gateway.RESTART — disabled while any HT Mesh operation or node OTA is in progress."
       >
         <div className="row">
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={onRestart}>
+          <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={onRestart}>
             <RefreshIcon /> Restart (soft)
           </button>
-          <button type="button" className="btn btn-outline" disabled={busy} onClick={onFactoryReset}>
+          <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>
             <AlertIcon /> Factory Reset
           </button>
         </div>

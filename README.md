@@ -6,7 +6,9 @@ The panel is **control-only**. Provisioning nodes and creating, renaming or dele
 
 The panel runs as a Control4 Composer web tab. It talks to the HT-Mesh Lua driver through the Director broker (`src/api/broker.js`), and the driver talks to the gateway. What the driver must implement is specified in [lua_requirement.md](lua_requirement.md).
 
-Opened outside Director (for example with `npm run dev`), the panel shows mock data from `src/data.js`, marks the header **Mock data**, and logs every command to the browser console instead of sending it.
+The panel has no built-in data. Everything comes from the driver's variables. Opened outside Director (for example with `npm run dev`), it shows **Offline** in the header, displays empty states, and disables Refresh.
+
+**Loading:** once the page has loaded, the panel waits 3 seconds so the driver can connect to the gateway (the header shows *Connecting…*). Then it sends `HTMESH_SYNC`, which asks the driver to rewrite every data variable, and reads the variables back (*Syncing…*). If that fails, the header shows *Sync failed*, and Refresh retries.
 
 Built with React 19 and Vite 8, linted with Oxlint.
 
@@ -34,19 +36,18 @@ The active tab is kept in the URL hash, so you can link straight to a tab: `#inf
 - **Nodes:** a card for each node with a power switch, online/offline state, device type and node ID. Selecting a node opens **Node Control**: a Control panel (left) and a Status panel (right) for that node, and asks the driver for the node's live state. Offline nodes can be selected, but their controls are disabled. Controls follow the light's mode: mode 1 lights get Power and Brightness, mode 2 lights get Power, CCT, Hue, Saturation and Lightness.
 - **Groups:** the same card layout and **Group Control** section. Commands go to the group address, and the Status panel lists the group's address, type and member nodes.
 - **Scenes:** each scene with its number and registered nodes, and a **Recall** button.
-- **Refresh** (top right): re-reads the driver's variables. They also update live without it.
+- **Refresh** (top right): runs the same sync as on load: `HTMESH_SYNC`, then re-reads every variable. Variables also update live without it.
 
 ## Project structure
 
 ```
 src/
 ├── App.jsx                  # Header, tabs, selection, gateway actions
-├── data.js                  # Mock driver variables (used outside Director)
 ├── index.css                # Design tokens (colours, fonts) and base styles
 ├── App.css                  # Component styles
 ├── api/
 │   ├── broker.js            # Director REST + Socket.IO client (vendored, unchanged)
-│   ├── client.js            # Sends HTMESH_RPC commands, reads driver variables; mock fallback
+│   ├── client.js            # HTMESH_RPC / HTMESH_SYNC commands, driver variables; offline fallback
 │   ├── commands.js          # Command specs: required params and ranges per API command
 │   ├── adapters.js          # Driver variables -> UI state
 │   └── useGateway.js        # React hook: state, optimistic updates, debounced sends
@@ -71,6 +72,7 @@ src/
 
 ```
 panel  --executeCommand('HTMESH_RPC', { command, params })-->  Lua driver  --WebSocket RPC-->  gateway
+panel  --executeCommand('HTMESH_SYNC', {})-------------------->  Lua driver  (rewrite all data variables)
 panel  <--variables: Information, Nodes, Groups, Scenes, Command Status--  Lua driver
 ```
 
