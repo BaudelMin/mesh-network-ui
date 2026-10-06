@@ -2,7 +2,9 @@
  * HT-Mesh gateway commands this panel sends, and the params each one requires
  * (from the HTMesh Gateway API Reference).
  *
- * Every request leaves the panel as { command, params }. Values use the panel's
+ * Every request is built as { command, params } and leaves the panel through the
+ * single driver command SetDeviceState (ExecuteCommand → EX_CMD.SetDeviceState;
+ * toDeviceStateParams below; format in docs/set-device-state.md). Values use the panel's
  * own ranges; the Lua driver converts them to wire ranges before sending
  * (see lua_requirement.md):
  *   hue         0–360   (degrees)   -> 0–65535
@@ -23,6 +25,8 @@ const lightness = { name: 'lightness', type: 'number', min: 0, max: 100 }
 const fadetime = { name: 'fadetime', type: 'number', min: 0 }
 
 export const COMMAND_SPECS = {
+  // Handled by the driver itself (not forwarded): rewrite every data variable.
+  'Gateway.SYNC': { required: [], optional: [] },
   'Gateway.RESTART': { required: [], optional: [{ name: 'reset', type: 'string', values: ['factory'] }] },
 
   'Node.ONOFF': { required: [nodeId, onoff], optional: [fadetime] },
@@ -71,6 +75,30 @@ export function buildRequest(command, params = {}) {
     if (params[p.name] !== undefined) out[p.name] = checkParam(command, p, params[p.name])
   }
   return { command, params: out }
+}
+
+// The one driver command every request is sent through:
+// broker.executeCommand → ExecuteCommand → EX_CMD.SetDeviceState(tParams).
+export const DEVICE_STATE_COMMAND = 'SetDeviceState'
+
+/*
+ * { command, params } -> SetDeviceState tParams:
+ *   command  string   e.g. "Node.ONOFF"
+ *   params   string   JSON of the command's params, panel ranges
+ *   id       string   target node / group / scene id; "" for gateway commands
+ *                     and multi-node commands (Node.STATE carries params.nodes)
+ *   isGroup  boolean  command targets a group  (Group.*)
+ *   isScene  boolean  command targets a scene  (Scene.*)
+ */
+export function toDeviceStateParams({ command, params }) {
+  const p = params || {}
+  return {
+    command,
+    params: JSON.stringify(p),
+    id: String(p.node_id ?? p.group_id ?? p.scene_id ?? ''),
+    isGroup: command.startsWith('Group.'),
+    isScene: command.startsWith('Scene.'),
+  }
 }
 
 /*

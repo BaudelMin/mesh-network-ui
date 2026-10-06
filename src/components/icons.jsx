@@ -63,6 +63,17 @@ export const AlertIcon = () => (
   </svg>
 )
 
+export const LogIcon = () => (
+  <svg {...base}>
+    <line x1="8" y1="6" x2="21" y2="6" />
+    <line x1="8" y1="12" x2="21" y2="12" />
+    <line x1="8" y1="18" x2="21" y2="18" />
+    <circle cx="3.5" cy="6" r="0.6" fill="currentColor" />
+    <circle cx="3.5" cy="12" r="0.6" fill="currentColor" />
+    <circle cx="3.5" cy="18" r="0.6" fill="currentColor" />
+  </svg>
+)
+
 export const PlayIcon = () => (
   <svg {...base} fill="currentColor" stroke="none">
     <path d="M6 4l14 8-14 8z" />

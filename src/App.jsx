@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGateway } from './api/useGateway.js'
 import GroupsTab from './components/GroupsTab.jsx'
 import InfoTab from './components/InfoTab.jsx'
+import LogsTab from './components/LogsTab.jsx'
 import NodesTab from './components/NodesTab.jsx'
 import ScenesTab from './components/ScenesTab.jsx'
-import { GridIcon, InfoIcon, RefreshIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
+import { GridIcon, InfoIcon, LogIcon, RefreshIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
 import './App.css'
 
 const PHASES = {
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'nodes', label: 'Nodes', icon: SwapIcon },
   { id: 'groups', label: 'Groups', icon: UsersIcon },
   { id: 'scenes', label: 'Scenes', icon: TriangleIcon },
+  { id: 'logs', label: 'Logs', icon: LogIcon },
 ]
 
 export default function App() {
@@ -164,6 +166,7 @@ export default function App() {
         {tab === 'scenes' && (
           <ScenesTab scenes={scenes} nodes={nodes} loading={loading} onRecall={api.recallScene} notify={notify} />
         )}
+        {tab === 'logs' && <LogsTab notify={notify} />}
       </main>
 
       {toast && <div className="toast" role="status">{toast}</div>}

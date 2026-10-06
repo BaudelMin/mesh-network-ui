@@ -1,6 +1,9 @@
 import { AlertIcon, RefreshIcon } from './icons.jsx'
 import { Card, Chip, ReadOnly } from './ui.jsx'
 
+// Factory Reset is hidden for now; set to true to bring the button back.
+const SHOW_FACTORY_RESET = false
+
 const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '')
 
 function formatUptime(total) {
@@ -79,9 +82,11 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
           <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={onRestart}>
             <RefreshIcon /> Restart (soft)
           </button>
-          <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>
-            <AlertIcon /> Factory Reset
-          </button>
+          {SHOW_FACTORY_RESET && (
+            <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>
+              <AlertIcon /> Factory Reset
+            </button>
+          )}
         </div>
       </Card>
     </div>

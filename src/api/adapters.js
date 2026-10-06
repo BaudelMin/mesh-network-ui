@@ -3,6 +3,9 @@
  * State values are already in panel ranges — hue 0–360, saturation/lightness 0–100.
  * Fields a node doesn't report for its mode stay undefined and are hidden in the UI.
  *
+ * Lists (Nodes, Groups, Scenes, and each entry's `nodes`) may arrive either as a
+ * JSON array or as an index-keyed object, which is what C4:JsonEncode produces.
+ *
  * Every adapter always returns a complete value: an empty or unparseable variable
  * (delivered as null), a missing section or a missing field falls back to the
  * EMPTY_* defaults below, so components never have to null-check.
@@ -11,8 +14,19 @@
 const num = (v) => (typeof v === 'number' ? v : undefined)
 const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
-const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : [])
-const ids = (v) => (Array.isArray(v) ? v.map(str).filter(Boolean) : [])
+
+// C4:JsonEncode writes a Lua array as an object keyed by index —
+// {"1":{…},"2":{…}} — and an empty one as {}. Accept that as well as a real
+// JSON array, in index order.
+function toArray(v) {
+  if (Array.isArray(v)) return v
+  if (!v || typeof v !== 'object') return []
+  return Object.keys(v)
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    .map((k) => v[k])
+}
+const list = (v) => toArray(v).filter((x) => x && typeof x === 'object')
+const ids = (v) => toArray(v).map(str).filter(Boolean)
 
 export const EMPTY_LIGHT_STATE = {
   on: undefined,

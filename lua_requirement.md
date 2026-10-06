@@ -8,17 +8,15 @@ Source of truth for the gateway protocol: *HTMesh Gateway API Reference* (xwiki,
 
 ```
 ┌──────────────┐  broker.executeCommand     ┌──────────────┐  WebSocket JSON-RPC   ┌──────────────┐
-│ HT-MESH panel│ ─────────────────────────▶ │  Lua driver  │ ────────────────────▶ │ HT-Mesh      │
+│ HT-MESH panel│ ── SetDeviceState ───────▶ │  Lua driver  │ ────────────────────▶ │ HT-Mesh      │
 │ (web tab JS) │                            │              │                       │ gateway      │
 │              │ ◀───────────────────────── │              │ ◀──────────────────── │              │
 └──────────────┘  C4 variables (JSON)       └──────────────┘  responses + .STATUS  └──────────────┘
                   live over Socket.IO                         pushes
 ```
 
-- **Panel → driver:** two Lua commands:
-  - `HTMESH_RPC`, with params `{ command, params }`, for gateway commands (§3)
-  - `HTMESH_SYNC`, with no params, which asks the driver to rewrite every data variable (§3a)
-- **Driver → panel:** five C4 variables holding JSON strings. The panel subscribes to them live over Socket.IO, re-subscribes after every Socket.IO reconnect, and also re-reads them over REST every 10 s while the tab is visible. The live push only speeds updates up: even with a dead socket the tab is at most 10 s behind the variables.
+- **Panel → driver:** one device command, `SetDeviceState`, with `tParams` `{ command, params, id, isGroup, isScene }`, for every request (§3). It reaches the driver as `ExecuteCommand("SetDeviceState", tParams)` → `EX_CMD.SetDeviceState`. That includes `Gateway.SYNC`, which asks the driver to rewrite every data variable (§3a). The full format is in [`docs/set-device-state.md`](docs/set-device-state.md).
+- **Driver → panel:** four C4 variables holding JSON strings (`Information`, `Nodes`, `Groups`, `Scenes`). There is no status variable: command outcomes are only logged by the driver (`[PANEL]` lines). Through broker.js the panel subscribes to the variables live, re-subscribes after every reconnect, and also re-reads them every 10 s while the tab is visible. The live push only speeds updates up: even with a dead socket the tab is at most 10 s behind the variables.
 - **Units:** the panel always sends and expects **panel ranges**. The driver converts to and from wire ranges (§5).
 
 ## 2. Driver setup
@@ -46,12 +44,11 @@ C4:AddVariable("Information",    "{}", "STRING")
 C4:AddVariable("Nodes",          "[]", "STRING")
 C4:AddVariable("Groups",         "[]", "STRING")
 C4:AddVariable("Scenes",         "[]", "STRING")
-C4:AddVariable("Command Status", "{}", "STRING")
 ```
 
 The names must match exactly (`src/api/client.js` → `VARIABLES`). Every value is a JSON string; the shapes are in §6.
 
-No driver.xml `<actions>` are needed: the panel calls `HTMESH_RPC` and `HTMESH_SYNC` through `executeCommand`, which goes straight to `ExecuteCommand`.
+No driver.xml `<actions>` are needed. The panel sends every request with `broker.executeCommand('SetDeviceState', tParams)`, which goes straight to `ExecuteCommand` and is dispatched to `EX_CMD.SetDeviceState` (handler in [`docs/set-device-state.md`](docs/set-device-state.md) §6). Declaring it under driver.xml `<commands>` is optional, and only needed to expose it to Composer programming.
 
 ### Empty values
 
@@ -63,25 +60,31 @@ When there is no data for a variable, the driver must still write it, using the 
 | `Nodes`          | `[]`        |
 | `Groups`         | `[]`        |
 | `Scenes`         | `[]`        |
-| `Command Status` | `{}`        |
 
 Examples: the gateway isn't connected, has no nodes or groups yet, or a query failed. The panel treats an empty value, an empty string, or invalid JSON as "no data", and shows "No gateway data available", "No nodes provisioned yet", and so on. Never leave stale data in a variable after the gateway reports that data is gone.
 
-## 3. Command entry point: `HTMESH_RPC`
+Lists may be written either as a JSON array or as the index-keyed object `C4:JsonEncode` produces for a Lua array (`{"1":{…},"2":{…}}`, and `{}` when empty). The panel accepts both, for the variables and for each entry's `nodes`.
+
+## 3. Command entry point: `EX_CMD.SetDeviceState`
 
 The panel calls:
 
 ```js
-broker.executeCommand('HTMESH_RPC', {
-  command: 'Node.HSL',                                                  // API <Target>.<Operation>
-  params: '{"node_id":"6abc…","hue":120,"saturation":100,"lightness":50}', // JSON string, panel ranges
+broker.executeCommand('SetDeviceState', {
+  command: 'Node.HSL',                                                    // API <Target>.<Operation>
+  params:  '{"node_id":"6abc…","hue":120,"saturation":100,"lightness":50}', // JSON string, panel ranges
+  id:      '6abc…',                                                       // node / group / scene id, or ""
+  isGroup: false,
+  isScene: false,
 })
 ```
 
+Fields, per-command values, examples and a JSON Schema: [`docs/set-device-state.md`](docs/set-device-state.md).
+
 The driver must:
 
-1. Handle `ExecuteCommand("HTMESH_RPC", tParams)`, and JSON-decode `tParams.params`.
-2. Reject any `command` not in the allowlist (§4), and report it through `Command Status` (§8).
+1. Handle `EX_CMD.SetDeviceState(tParams)`, JSON-decode `tParams.params`, and check that `id`, `isGroup` and `isScene` match it (they arrive as strings). Route `Gateway.SYNC` to §3a; everything else continues below.
+2. Reject any `command` not in the allowlist (§4), and log it (§8).
 3. Convert values to wire ranges (§5).
 4. Wrap the result in the wire request and queue it (§7):
 
@@ -92,22 +95,24 @@ The driver must:
 
 The panel already validates required params and ranges (`src/api/commands.js`), but the driver should validate again before sending.
 
-## 3a. Data sync entry point: `HTMESH_SYNC`
+## 3a. Data sync: `Gateway.SYNC`
 
 The panel calls:
 
 ```js
-broker.executeCommand('HTMESH_SYNC', {})
+broker.executeCommand('SetDeviceState', { command: 'Gateway.SYNC', params: '{}', id: '', isGroup: false, isScene: false })
 ```
+
+`Gateway.SYNC` is handled by the driver and never forwarded to the gateway.
 
 It does this at two times:
 
-- **On page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `HTMESH_SYNC`. Until then its header shows *Connecting…*.
+- **On page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `Gateway.SYNC`. Until then its header shows *Connecting…*.
 - **On Refresh:** every press of the top-right **Refresh** button sends it again.
 
-The panel then waits for a `Command Status` with `command` = `"HTMESH_SYNC"` and a `seq` newer than the one it held before sending (§6). It waits up to **20 seconds**. Then it re-reads all five variables through the REST API, so it shows the synced data and not the data from before the sync. The status `message` is shown as a toast. If no status arrives within 20 s, the panel re-reads the variables anyway and shows "gateway slow to answer".
+Once `ExecuteCommand` returns, the panel re-reads the four variables and shows "Refresh requested". There is no completion signal: each variable the driver rewrites as the gateway answers reaches the panel over the live feed (or the next 10 s re-read) and updates the view by itself.
 
-The driver must, on `HTMESH_SYNC`:
+The driver must, on `Gateway.SYNC`:
 
 1. **If the gateway WebSocket is connected**, queue the full data refresh (the same requests as the startup sync in §9, steps 2–6 plus 8):
    - `Gateway.INFO` and `Gateway.STATUS` → `Information`
@@ -115,10 +120,9 @@ The driver must, on `HTMESH_SYNC`:
    - `Gateway.GROUPS` → `Groups`
    - `Gateway.SCENES` → `Scenes`
 2. **When each part completes, write its variable, even if the content is unchanged.** Write the empty value (§2) if the gateway returned nothing, or if the request failed.
-3. **When the last part completes, report the outcome** in `Command Status` with `command` = `"HTMESH_SYNC"` and `target` = `""`. If every part succeeded, use `code` `0` and the message `"gateway data refreshed"`. If any part failed, use `38422` and a message such as `"1 of 4 gateway reads failed"`.
-4. **If the gateway is not connected**, immediately write the empty value to `Information`, `Nodes`, `Groups` and `Scenes`. Then report `HTMESH_SYNC` with `code` `-1` and the message `"gateway not connected"`, so the panel stops waiting, and start a reconnect (§9).
-5. Return from `ExecuteCommand` right away. Don't block on gateway responses; the panel picks up the results from the variables.
-6. If several `HTMESH_SYNC` calls arrive while a sync is running, merge them into one. Don't queue duplicate `Gateway.*` reads. The one completion status answers all of them.
+3. **If the gateway is not connected**, immediately write the empty value to `Information`, `Nodes`, `Groups` and `Scenes`. Then start a reconnect (§9).
+4. Return from `ExecuteCommand` right away. Don't block on gateway responses; the panel picks up the results from the variables.
+5. If several `Gateway.SYNC` calls arrive while a sync is running, merge them into one. Don't queue duplicate `Gateway.*` reads.
 
 ## 4. Commands the panel sends
 
@@ -126,6 +130,7 @@ Params are listed as the panel sends them, in panel ranges. `fadetime` (ms, opti
 
 | `command`          | Required params (panel)                         | Wire `data` after conversion                 | When the panel sends it                     |
 | ------------------ | ----------------------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| `Gateway.SYNC`     | —                                               | not forwarded (driver-local, §3a)            | 3 s after load, and Refresh                 |
 | `Gateway.RESTART`  | — (optional `reset: "factory"`)                 | same                                         | Restart / Factory Reset buttons             |
 | `Node.ONOFF`       | `node_id`, `onoff` (0/1)                        | same                                         | Power toggle / On-Off buttons               |
 | `Node.BRIGHTNESS`  | `node_id`, `brightness` (0–100)                 | same                                         | Brightness slider (mode 1 nodes)            |
@@ -249,17 +254,9 @@ This is an array with one entry per registered node. The driver builds it by mer
 
 This comes straight from `Gateway.SCENES`. `scene_number` is optional, and `Scene.INFO` can fill it in if missing.
 
-### `Command Status`
+### No status variable
 
-This is the outcome of the last command, shown to the user as a toast:
-
-```json
-{ "seq": 1727700000123, "command": "Node.ONOFF", "target": "6abcce2d9adef049cc886b53", "code": 0, "message": "success" }
-```
-
-- `seq` must **strictly increase** on every update, including across driver restarts; for example, use `os.time() * 1000 + counter`. The panel ignores the value that exists when the page loads, then toasts each newer `seq`.
-- `code` is `0` for success. Anything else is shown as a failure, using `message`.
-- A sync completion uses `command` = `"HTMESH_SYNC"` and `target` = `""` (§3a). For example: `{ "seq": 1727700000456, "command": "HTMESH_SYNC", "target": "", "code": 0, "message": "gateway data refreshed" }`. The panel shows it as the Refresh result, not as a separate command toast.
+The driver keeps no `Command Status` variable. Command outcomes and rejected commands are logged by the driver (`[PANEL]` lines in the Lua trace); the panel sees their effect through the data variables.
 
 ## 7. Sending: queue and concurrency
 
@@ -283,25 +280,25 @@ How to recognise the final push for each command:
 | `Group.<CTRL>.STATUS`  | —                                                  | first push, always `code 0`                                 |
 | `Scene.RECALL.STATUS`  | —                                                  | first push                                                  |
 
-`Gateway.RESTART` sends no response at all. Report it as sent in `Command Status`, expect the WebSocket to drop, and reconnect (§9).
+`Gateway.RESTART` sends no response at all. Log it as sent, expect the WebSocket to drop, and reconnect (§9).
 
 ## 8. Handling responses and pushes
 
 | Message                                    | Driver action |
 | ------------------------------------------ | ------------- |
 | Immediate response, `code` 0 or 38430      | Nothing for the user yet; keep waiting (§7) |
-| Immediate response, any other `code`       | Set `Command Status` with that `code`/`message`, dequeue |
-| `Node.ONOFF/BRIGHTNESS/CCT/HSL.STATUS`, code 0 | Merge `result.state` (converted, §5) into that node in `Nodes`, and set `Command Status` to success |
-| same, final failure                        | Set `Command Status` failure. On the next poll, `Node.STATE` that node to restore its true state |
+| Immediate response, any other `code`       | Log that `code`/`message`, dequeue |
+| `Node.ONOFF/BRIGHTNESS/CCT/HSL.STATUS`, code 0 | Merge `result.state` (converted, §5) into that node in `Nodes` |
+| same, final failure                        | Log the failure. On the next poll, `Node.STATE` that node to restore its true state |
 | `Node.STATE.STATUS` code 1 / final code 0  | Merge each node's `state`. If `reachable: false`, set that node's `is_alive = false` |
 | `Node.INFO.STATUS`                         | Update `mac`, `dev_type`, `mode` and `state` for that node |
-| `Group.<CTRL>.STATUS`                      | Merge `result.state` into that group's `state` in `Groups`, set `Command Status`, then queue `Node.STATE` for the group's `nodes` (the gateway marks their cache stale) |
-| `Scene.RECALL.STATUS`                      | Set `Command Status`, then queue `Node.STATE` for the scene's `nodes` |
+| `Group.<CTRL>.STATUS`                      | Merge `result.state` into that group's `state` in `Groups`, then queue `Node.STATE` for the group's `nodes` (the gateway marks their cache stale) |
+| `Scene.RECALL.STATUS`                      | Queue `Node.STATE` for the scene's `nodes` |
 | `Gateway.STATUS` (response or 30 s push)   | Update `Information.status` |
 | `Gateway.NETWORK.STATUS`                   | Update `Information.info.network.wifi` |
 | `Gateway.REMOVE.STATUS` (removed: true)    | Remove that node from `Nodes` (a removal done from the mobile app) |
 
-Outside `HTMESH_SYNC`, write a variable only when its content changes, so the panel doesn't re-render for nothing. During a sync, always write every variable (§3a).
+Outside `Gateway.SYNC`, write a variable only when its content changes, so the panel doesn't re-render for nothing. During a sync, always write every variable (§3a).
 
 Useful error codes to put in `message` (full table in the API reference):
 
@@ -339,14 +336,14 @@ Useful error codes to put in `message` (full table in the API reference):
 
 Polls go through the same queue, behind any user command.
 
-**Reconnect** with backoff (for example 2 s, 5 s, 10 s, then every 30 s) after a disconnect: `Gateway.RESTART`, `Gateway.NETWORK`, a gateway OTA, or a network drop. While disconnected, set every node's `is_alive` to `false` in `Nodes`, so the panel disables their controls. An `HTMESH_SYNC` received while disconnected writes empty values instead (§3a).
+**Reconnect** with backoff (for example 2 s, 5 s, 10 s, then every 30 s) after a disconnect: `Gateway.RESTART`, `Gateway.NETWORK`, a gateway OTA, or a network drop. While disconnected, set every node's `is_alive` to `false` in `Nodes`, so the panel disables their controls. A `Gateway.SYNC` received while disconnected writes empty values instead (§3a).
 
 ## 10. Checklist
 
 - [ ] Properties `Gateway IP` and `Gateway Port`, with a WebSocket client to `ws://<ip>:<port>/rpc/wss`
-- [ ] Variables `Information`, `Nodes`, `Groups`, `Scenes`, `Command Status` created as STRING
-- [ ] `ExecuteCommand("HTMESH_RPC")`: decode `params`, check the allowlist (§4), convert (§5), queue
-- [ ] `ExecuteCommand("HTMESH_SYNC")`: full refresh that always writes all four data variables, using empty values when there's no data (§3a)
+- [ ] Variables `Information`, `Nodes`, `Groups`, `Scenes` created as STRING
+- [ ] `EX_CMD.SetDeviceState(tParams)`: decode `params`, cross-check `id` / `isGroup` / `isScene`, check the allowlist (§4), convert (§5), queue
+- [ ] `Gateway.SYNC` (via `SetDeviceState`): full refresh that always writes all four data variables, using empty values when there's no data (§3a)
 - [ ] Request `id` counter and a pending-request table
 - [ ] Serialized queue with the final-push detection in §7, a 0x9618 retry, and coalescing of control commands
 - [ ] Wire → panel conversion on every HSL value written to variables
@@ -354,5 +351,5 @@ Polls go through the same queue, behind any user command.
 - [ ] Group state maintained from `Group.*.STATUS` and persisted
 - [ ] `Node.STATE` follow-ups after group commands and scene recall
 - [ ] Startup sync, polling, reconnect with backoff, `is_alive = false` while disconnected
-- [ ] `Command Status` with a monotonic `seq` for every final outcome and every rejected command
+- [ ] `[PANEL]` log line for every final outcome and every rejected command
 - [ ] `dist/` copied into `www/`, and the tab declared in driver.xml
