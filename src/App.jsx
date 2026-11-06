@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isHiddenNode } from './api/adapters.js'
 import { useGateway } from './api/useGateway.js'
 import GroupsTab from './components/GroupsTab.jsx'
 import InfoTab from './components/InfoTab.jsx'
@@ -58,6 +59,9 @@ export default function App() {
   const { gateway, nodes, groups, scenes, phase, link } = api
   const loading = phase === 'connecting' || phase === 'syncing'
   const showLink = phase !== 'offline' && phase !== 'connecting'
+  // The Nodes tab leaves out hidden kinds (shades for now); Groups and Scenes
+  // get every node so they can count and name all members.
+  const visibleNodes = nodes.filter((n) => !isHiddenNode(n))
 
   const refresh = () => {
     setRefreshing(true)
@@ -146,7 +150,7 @@ export default function App() {
         )}
         {tab === 'nodes' && (
           <NodesTab
-            nodes={nodes}
+            nodes={visibleNodes}
             loading={loading}
             selectedId={selectedNode}
             onSelect={selectNode}

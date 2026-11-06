@@ -76,11 +76,11 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
       <Card
         className="span-2"
         title="Gateway Actions"
-        subtitle="Gateway.RESTART — disabled while any HT Mesh operation or node OTA is in progress."
+        subtitle="Restart the gateway. Disabled while any HT Mesh operation or node OTA is in progress."
       >
         <div className="row">
           <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={onRestart}>
-            <RefreshIcon /> Restart (soft)
+            <RefreshIcon /> Restart
           </button>
           {SHOW_FACTORY_RESET && (
             <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>

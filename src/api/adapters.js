@@ -124,6 +124,36 @@ export function toGateway(data) {
   }
 }
 
+// Node kinds, identified by `product_id` (dev_type is "light" for both).
+export const PRODUCT_IDS = { light: 'HYP-LT-HT', shade: 'HYP-SH-HT' }
+export const NODE_KINDS = { light: 'Light', shade: 'Shade' }
+
+// Shades have no control UI yet, so their nodes are left out of the Nodes tab
+// for now (they are still counted and named in groups and scenes). Remove a
+// kind from HIDDEN_NODE_KINDS to show it again.
+export const HIDDEN_NODE_KINDS = ['shade']
+export const isHiddenNode = (node) => HIDDEN_NODE_KINDS.includes(node.kind)
+
+function nodeKind(productId, devType) {
+  const kind = Object.keys(PRODUCT_IDS).find((k) => PRODUCT_IDS[k] === productId)
+  return kind || devType || 'light'
+}
+
+/*
+ * Counts a group's / scene's member node ids by kind, using the Nodes list:
+ *   { light: 2, shade: 1, unknown: 0 }
+ * `unknown` is a member id that isn't in Nodes (not loaded yet, or removed).
+ */
+export function countMembersByKind(memberIds, nodes) {
+  const counts = { ...Object.fromEntries(Object.keys(NODE_KINDS).map((k) => [k, 0])), unknown: 0 }
+  for (const id of memberIds) {
+    const kind = nodes.find((n) => n.id === id)?.kind
+    if (kind && kind in counts) counts[kind] += 1
+    else counts.unknown += 1
+  }
+  return counts
+}
+
 // Entries without an id can't be addressed by a command, so they are dropped.
 export const toNodes = (data) =>
   list(data)
@@ -132,6 +162,7 @@ export const toNodes = (data) =>
       name: str(n.name) || str(n.id),
       mac: str(n.mac),
       product: str(n.product_id),
+      kind: nodeKind(str(n.product_id), str(n.dev_type)),
       type: str(n.dev_type) || 'light',
       online: Boolean(n.is_alive),
       mode: num(n.mode),
