@@ -4,6 +4,16 @@ This is what the Control4 Lua driver must implement so the HT-MESH panel (this r
 
 Source of truth for the gateway protocol: *HTMesh Gateway API Reference* (xwiki, last modified 2026-09-23). Section names below refer to it.
 
+## What changed in the driver
+
+The driver (`hypnotik-ht-mesh-gw-r01`) now reads nodes, groups and scenes in one inventory poll. The variable names and JSON shapes (§6) and the `SetDeviceState` contract (§3) are unchanged.
+
+1. **One inventory poll.** `Gateway.NODES`, `Gateway.GROUPS` and `Gateway.SCENES` are sent from one place only, always in the order Nodes → Groups → Scenes, each after the previous reply arrives. The poll runs about 1 s after the driver connects to the gateway, every **15 s** (it used to be Nodes every 30 s, Groups and Scenes every 5 min), and on `Gateway.SYNC`, the Composer action `Refresh Scenes` and after `Group Delete`. The panel never sends `Gateway.NODES`, `Gateway.GROUPS` or `Gateway.SCENES` (the driver rejects them); it uses `Gateway.SYNC` to refresh.
+2. **Variables update on every reply.** Each reply rewrites `Nodes`, `Groups` or `Scenes` when the content changed. The driver also saves the list to Control4 persistent storage, and never saves an empty reply.
+3. **`Gateway.SYNC`** runs `Gateway.INFO` + `Gateway.STATUS`, then the inventory poll (Nodes → Groups → Scenes), then `Node.STATE` for alive nodes, and force-writes all four variables. A read that fails is written as `[]` (`{}` for `Information`). The panel shows Refresh as busy until `Nodes`, `Groups` and `Scenes` have each changed since the click, or for at most 15 s, and never sends a second `Gateway.SYNC` while one is running.
+4. **Node count per group.** On every poll the driver pushes each group driver's "Nodes Count": member lights for the light group driver, member shades for the shade group driver. A member counts only if its id is in `Nodes`. A node is a shade when its `product_id`, upper-cased, is `HYP-SH-HT` or starts with `HYP-SH-`; every other node is a light, including one with no `product_id`. The panel uses the same rule (`isShadeProduct` in `src/api/adapters.js`) and shows each group as e.g. "2 lights · 1 shade · 1 not found", where "not found" is a member id that isn't in `Nodes`.
+5. **Driver start or disconnect.** All four variables start empty (`{}` / `[]`) when the driver starts, and on disconnect every node has `is_alive: false`. Real data arrives after the first poll, about 1–2 s after the driver connects. The panel therefore shows "Waiting for gateway…" instead of "No nodes / groups / scenes" while the link isn't live, or before a list has held any items since the page loaded. Once the link is live and a list that had items becomes `[]`, it shows the normal empty state.
+
 ## 1. Architecture
 
 ```
@@ -61,7 +71,7 @@ When there is no data for a variable, the driver must still write it, using the 
 | `Groups`         | `[]`        |
 | `Scenes`         | `[]`        |
 
-Examples: the gateway isn't connected, has no nodes or groups yet, or a query failed. The panel treats an empty value, an empty string, or invalid JSON as "no data", and shows "No gateway data available", "No nodes provisioned yet", and so on. Never leave stale data in a variable after the gateway reports that data is gone.
+Examples: the gateway isn't connected, has no nodes or groups yet, or a query failed. The panel treats an empty value, an empty string, or invalid JSON as "no data". For `Nodes`, `Groups` and `Scenes` it shows "Waiting for gateway…" until the list has held items since the page loaded (and while the link isn't live), then "No nodes provisioned yet" and so on. Never leave stale data in a variable after the gateway reports that data is gone.
 
 Lists may be written either as a JSON array or as the index-keyed object `C4:JsonEncode` produces for a Lua array (`{"1":{…},"2":{…}}`, and `{}` when empty). The panel accepts both, for the variables and for each entry's `nodes`.
 
@@ -110,16 +120,15 @@ It does this at two times:
 - **On page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `Gateway.SYNC`. Until then its header shows *Connecting…*.
 - **On Refresh:** every press of the top-right **Refresh** button sends it again.
 
-Once `ExecuteCommand` returns, the panel re-reads the four variables and shows "Refresh requested". There is no completion signal: each variable the driver rewrites as the gateway answers reaches the panel over the live feed (or the next 10 s re-read) and updates the view by itself.
+Once `ExecuteCommand` returns, the panel re-reads the four variables. There is no completion signal: each variable the driver rewrites as the gateway answers reaches the panel over the live feed (or the next 10 s re-read) and updates the view by itself. The Refresh button stays busy until `Nodes`, `Groups` and `Scenes` have each changed since the click, or for at most 15 s. While it is busy the panel doesn't send another `Gateway.SYNC`.
 
 The driver must, on `Gateway.SYNC`:
 
-1. **If the gateway WebSocket is connected**, queue the full data refresh (the same requests as the startup sync in §9, steps 2–6 plus 8):
+1. **If the gateway WebSocket is connected**, run the full data refresh, in this order:
    - `Gateway.INFO` and `Gateway.STATUS` → `Information`
-   - `Gateway.NODES` (plus `Node.STATE` for alive nodes) → `Nodes`
-   - `Gateway.GROUPS` → `Groups`
-   - `Gateway.SCENES` → `Scenes`
-2. **When each part completes, write its variable, even if the content is unchanged.** Write the empty value (§2) if the gateway returned nothing, or if the request failed.
+   - the inventory poll (§9): `Gateway.NODES` → `Nodes`, then `Gateway.GROUPS` → `Groups`, then `Gateway.SCENES` → `Scenes`
+   - `Node.STATE` for alive nodes → `Nodes`
+2. **When each part completes, write its variable, even if the content is unchanged.** Write the empty value (§2) if the gateway returned nothing, or if the request failed (`[]`, or `{}` for `Information`).
 3. **If the gateway is not connected**, immediately write the empty value to `Information`, `Nodes`, `Groups` and `Scenes`. Then start a reconnect (§9).
 4. Return from `ExecuteCommand` right away. Don't block on gateway responses; the panel picks up the results from the variables.
 5. If several `Gateway.SYNC` calls arrive while a sync is running, merge them into one. Don't queue duplicate `Gateway.*` reads.
@@ -325,13 +334,14 @@ Useful error codes to put in `message` (full table in the API reference):
 7. `Node.INFO` for each node whose `mac`, `dev_type` or `mode` is still unknown, one at a time. This is slow, since it fetches 10 properties per node.
 8. `Node.STATE` for alive nodes, in batches of up to 16
 
+**Inventory poll.** `Gateway.NODES` → `Gateway.GROUPS` → `Gateway.SCENES` are sent from one place only, in that order, each after the previous reply arrives. It runs about 1 s after connecting, every **15 s**, and on `Gateway.SYNC`, the Composer action `Refresh Scenes` and after `Group Delete`. Each reply rewrites its variable when the content changed and is saved to persistent storage (an empty reply is never saved). Each poll also pushes every group driver's "Nodes Count" (see "What changed in the driver", point 4).
+
 **Polling.** Nodes do **not** push their own state changes (a wall switch, for example), so poll:
 
-| What             | Suggested interval | Why |
+| What             | Interval           | Why |
 | ---------------- | ------------------ | --- |
-| `Gateway.NODES`  | 30 s               | `is_alive` (online/offline), nodes added or removed by the mobile app |
+| Inventory poll (`Gateway.NODES`, `Gateway.GROUPS`, `Gateway.SCENES`) | 15 s | `is_alive` (online/offline), nodes added or removed and membership edited in the mobile app |
 | `Node.STATE`     | 60 s, alive nodes, batches of 16 | state changed outside the panel |
-| `Gateway.GROUPS`, `Gateway.SCENES` | 5 min | membership edited in the mobile app |
 | `Gateway.STATUS` | none               | auto-pushed every 30 s |
 
 Polls go through the same queue, behind any user command.
@@ -350,6 +360,7 @@ Polls go through the same queue, behind any user command.
 - [ ] Mode-aware `state` (only the fields reported for that mode)
 - [ ] Group state maintained from `Group.*.STATUS` and persisted
 - [ ] `Node.STATE` follow-ups after group commands and scene recall
-- [ ] Startup sync, polling, reconnect with backoff, `is_alive = false` while disconnected
+- [ ] Startup sync, 15 s inventory poll (Nodes → Groups → Scenes), reconnect with backoff, `is_alive = false` while disconnected
+- [ ] Per-group "Nodes Count" pushed on every poll (lights / shades, `HYP-SH-` rule)
 - [ ] `[PANEL]` log line for every final outcome and every rejected command
 - [ ] `dist/` copied into `www/`, and the tab declared in driver.xml

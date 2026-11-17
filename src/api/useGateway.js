@@ -19,6 +19,12 @@ const SEND_DEBOUNCE_MS = 250
 // Time given to the driver to establish its gateway connection before the first sync.
 const INITIAL_SYNC_DELAY_MS = 3000
 
+// A sync stays busy until Nodes, Groups and Scenes have each changed, or this long.
+// The driver re-reads the gateway every 15 s anyway.
+const SYNC_BUSY_MAX_MS = 15000
+
+const LISTS = [VARIABLES.nodes, VARIABLES.groups, VARIABLES.scenes]
+
 const patchById = (id, patch) => (list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x))
 
 export function useGateway(notify) {
@@ -32,20 +38,54 @@ export function useGateway(notify) {
   const [phase, setPhase] = useState(client.mode === 'offline' ? 'offline' : 'connecting')
   // 'live' | 'polling' | 'offline' — whether what is shown is current (see client.onLink)
   const [link, setLink] = useState('polling')
+  // Variable name -> true once it has held a non-empty list since the page loaded.
+  // Until then an empty list means "not loaded yet", not "none" (the driver
+  // starts every variable empty and fills it after its first poll).
+  const [seen, setSeen] = useState({})
   const timers = useRef({})
+  // The running sync: { armed, pending: Set of list variables still to change, finish(complete) }
+  const syncRun = useRef(null)
 
-  // Ask the driver to rewrite every data variable, then read back what it holds
-  // now. The driver has no completion signal (no status variable): each
-  // variable it rewrites as the gateway answers arrives over the live push /
-  // poll and updates the view by itself. Resolves with the message to show.
+  // Ask the driver to re-read the gateway and rewrite every data variable, then
+  // read back what it holds now. The driver has no completion signal, so the
+  // sync counts as done once Nodes, Groups and Scenes have each changed since
+  // it started, or after SYNC_BUSY_MAX_MS. Only one runs at a time: a second
+  // call returns the running one instead of sending another Gateway.SYNC.
+  // Resolves with the message to show.
   const sync = useCallback(() => {
+    if (syncRun.current) {
+      logInfo('gateway', 'sync() already running — not sending another Gateway.SYNC')
+      return syncRun.current.promise
+    }
     logInfo('gateway', 'sync() started')
     setPhase('syncing')
-    return client
+
+    let resolveDone
+    const done = new Promise((resolve) => {
+      resolveDone = resolve
+    })
+    const timer = setTimeout(() => resolveDone(false), SYNC_BUSY_MAX_MS)
+    const run = {
+      armed: false,
+      pending: new Set(LISTS),
+      finish: (complete) => {
+        clearTimeout(timer)
+        resolveDone(complete)
+      },
+    }
+    syncRun.current = run
+
+    run.promise = client
       .sync()
       .then(() => client.refresh())
       .then(() => {
-        const message = 'Refresh requested — data updates as the gateway answers'
+        // Arm only now: client.refresh() re-emits every variable unchanged,
+        // which must not count as the driver's answer.
+        run.armed = true
+        return done
+      })
+      .then((complete) => {
+        const message = complete ? 'Gateway data refreshed' : 'Refresh requested — data updates as the gateway answers'
         logInfo('gateway', 'sync() finished', message)
         setPhase('ready')
         return message
@@ -55,15 +95,35 @@ export function useGateway(notify) {
         setPhase(client.mode === 'offline' ? 'offline' : 'error')
         throw err
       })
+      .finally(() => {
+        clearTimeout(timer)
+        syncRun.current = null
+      })
+    return run.promise
   }, [client])
 
   useEffect(() => {
+    // Called for every list variable update: marks it seen once it holds
+    // items, and counts it towards the running sync.
+    const arrived = (name, list) => {
+      if (list.length) setSeen((s) => (s[name] ? s : { ...s, [name]: true }))
+      const run = syncRun.current
+      if (!run?.armed) return
+      run.pending.delete(name)
+      if (run.pending.size === 0) run.finish(true)
+    }
+    const onList = (name, adapt, set) =>
+      client.onVariable(name, (d) => {
+        const list = adapt(d)
+        set(list)
+        arrived(name, list)
+      })
     const subs = [
       client.onLink(setLink),
       client.onVariable(VARIABLES.info, (d) => setGateway(toGateway(d))),
-      client.onVariable(VARIABLES.nodes, (d) => setNodes(toNodes(d))),
-      client.onVariable(VARIABLES.groups, (d) => setGroups(toGroups(d))),
-      client.onVariable(VARIABLES.scenes, (d) => setScenes(toScenes(d))),
+      onList(VARIABLES.nodes, toNodes, setNodes),
+      onList(VARIABLES.groups, toGroups, setGroups),
+      onList(VARIABLES.scenes, toScenes, setScenes),
     ]
     const timer =
       client.mode === 'offline'
@@ -122,9 +182,19 @@ export function useGateway(notify) {
     }
   }
 
+  // An empty list is "waiting" (not "none") while the link isn't live, or
+  // before that variable has held any items since the page loaded. Outside
+  // Director nothing will ever arrive, so the normal empty states are shown.
+  const waitingFor = (name) => client.mode !== 'offline' && (link !== 'live' || !seen[name])
+
   return {
     phase,
     link,
+    waiting: {
+      nodes: waitingFor(VARIABLES.nodes),
+      groups: waitingFor(VARIABLES.groups),
+      scenes: waitingFor(VARIABLES.scenes),
+    },
     gateway,
     nodes,
     groups,

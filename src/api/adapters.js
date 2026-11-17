@@ -134,10 +134,15 @@ export const NODE_KINDS = { light: 'Light', shade: 'Shade' }
 export const HIDDEN_NODE_KINDS = ['shade']
 export const isHiddenNode = (node) => HIDDEN_NODE_KINDS.includes(node.kind)
 
-function nodeKind(productId, devType) {
-  const kind = Object.keys(PRODUCT_IDS).find((k) => PRODUCT_IDS[k] === productId)
-  return kind || devType || 'light'
+// Same rule as the driver's per-group "Nodes Count": a node is a shade when its
+// product_id, upper-cased, is HYP-SH-HT or starts with HYP-SH-. Every other
+// node is a light, including one with no product_id.
+export const isShadeProduct = (productId) => {
+  const p = str(productId).toUpperCase()
+  return p === PRODUCT_IDS.shade || p.startsWith('HYP-SH-')
 }
+
+const nodeKind = (productId) => (isShadeProduct(productId) ? 'shade' : 'light')
 
 /*
  * Counts a group's / scene's member node ids by kind, using the Nodes list:
@@ -162,7 +167,7 @@ export const toNodes = (data) =>
       name: str(n.name) || str(n.id),
       mac: str(n.mac),
       product: str(n.product_id),
-      kind: nodeKind(str(n.product_id), str(n.dev_type)),
+      kind: nodeKind(n.product_id),
       type: str(n.dev_type) || 'light',
       online: Boolean(n.is_alive),
       mode: num(n.mode),

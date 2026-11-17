@@ -6,19 +6,20 @@ import EntityCard from './EntityCard.jsx'
 const hex = (n) => (typeof n === 'number' ? `0x${n.toString(16).toUpperCase()}` : '—')
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-// [{ kind, label, count }]: one entry per node kind (always shown, even at 0),
-// plus "Unknown" only when a member isn't in the Nodes list.
+// [{ kind, text }], e.g. "2 lights", "1 shade", "1 not found": lights and shades
+// are always shown (even at 0), counted with the driver's rule (isShadeProduct);
+// "not found" only when a member id isn't in the Nodes list.
 function memberCounts(memberIds, nodes) {
   const counts = countMembersByKind(memberIds, nodes)
-  const rows = Object.entries(NODE_KINDS).map(([kind, label]) => ({ kind, label, count: counts[kind] }))
-  if (counts.unknown) rows.push({ kind: 'unknown', label: 'Unknown', count: counts.unknown })
+  const rows = Object.keys(NODE_KINDS).map((kind) => ({ kind, text: plural(counts[kind], kind) }))
+  if (counts.unknown) rows.push({ kind: 'unknown', text: `${counts.unknown} not found` })
   return rows
 }
 
-const describeCounts = (rows) => rows.map((r) => `${r.label}: ${plural(r.count, 'node')}`).join(' · ')
+const describeCounts = (rows) => rows.map((r) => r.text).join(' · ')
 
 // `nodes` is the full Nodes list (shades included), so every member is counted and named.
-export default function GroupsTab({ groups, nodes, loading, selectedId, onSelect, onUpdate }) {
+export default function GroupsTab({ groups, nodes, waiting, selectedId, onSelect, onUpdate }) {
   const selected = groups.find((g) => g.id === selectedId) ?? null
   const nodeName = (id) => nodes.find((n) => n.id === id)?.name ?? id
 
@@ -29,7 +30,7 @@ export default function GroupsTab({ groups, nodes, loading, selectedId, onSelect
         subtitle="Group commands — broadcast to the group address, all members update simultaneously."
         target={selected}
         emptyText={
-          groups.length ? 'Select a group from the list below to control it.' : loading ? 'Loading groups…' : 'No groups available.'
+          groups.length ? 'Select a group from the list below to control it.' : waiting ? 'Waiting for gateway…' : 'No groups available.'
         }
         info={
           selected
@@ -51,7 +52,7 @@ export default function GroupsTab({ groups, nodes, loading, selectedId, onSelect
         </header>
 
         {groups.length === 0 ? (
-          <p className="empty">{loading ? 'Loading groups…' : 'No groups configured.'}</p>
+          <p className="empty">{waiting ? 'Waiting for gateway…' : 'No groups configured.'}</p>
         ) : (
           <div className="entity-grid">
             {groups.map((g) => (
@@ -64,13 +65,7 @@ export default function GroupsTab({ groups, nodes, loading, selectedId, onSelect
                 onSelect={() => onSelect(g.id)}
               >
                 <span className="mono">{hex(g.address)}</span>
-                <span className="kind-counts">
-                  {memberCounts(g.members, nodes).map((r) => (
-                    <span key={r.kind} className={`kind-count kind-${r.kind}`}>
-                      <span className="type-tag">{r.label}</span> {plural(r.count, 'node')}
-                    </span>
-                  ))}
-                </span>
+                <span className="kind-counts">{describeCounts(memberCounts(g.members, nodes))}</span>
               </EntityCard>
             ))}
           </div>

@@ -4,6 +4,10 @@ import { Card, Chip, ReadOnly } from './ui.jsx'
 // Factory Reset is hidden for now; set to true to bring the button back.
 const SHOW_FACTORY_RESET = false
 
+// How long a gateway action button shows its busy animation (spinner + progress bar).
+export const GATEWAY_ACTION_MS = 5000
+const progressStyle = { '--progress-ms': `${GATEWAY_ACTION_MS}ms` }
+
 const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '')
 
 function formatUptime(total) {
@@ -17,9 +21,11 @@ function formatUptime(total) {
 }
 
 // Without gateway data every card keeps its labels and shows blank values (EMPTY_GATEWAY).
+// `busy` names the gateway action in progress ('restart' | 'factoryReset'), or is null.
 export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
   const { identity: id, runtime: rt, network: net, location: loc } = gateway
-  const actionsDisabled = busy || !gateway.available
+  const actionsDisabled = Boolean(busy) || !gateway.available
+  const restarting = busy === 'restart'
 
   return (
     <div className="grid-2">
@@ -79,8 +85,16 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
         subtitle="Restart the gateway. Disabled while any HT Mesh operation or node OTA is in progress."
       >
         <div className="row">
-          <button type="button" className="btn btn-primary" disabled={actionsDisabled} onClick={onRestart}>
-            <RefreshIcon /> Restart
+          <button
+            type="button"
+            className={`btn btn-primary ${restarting ? 'btn-progress' : ''}`}
+            style={restarting ? progressStyle : undefined}
+            disabled={actionsDisabled}
+            aria-busy={restarting}
+            onClick={onRestart}
+          >
+            <span className={restarting ? 'spin' : ''}><RefreshIcon /></span>{' '}
+            {restarting ? 'Restarting…' : 'Restart'}
           </button>
           {SHOW_FACTORY_RESET && (
             <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>

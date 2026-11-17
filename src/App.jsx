@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { isHiddenNode } from './api/adapters.js'
 import { useGateway } from './api/useGateway.js'
 import GroupsTab from './components/GroupsTab.jsx'
-import InfoTab from './components/InfoTab.jsx'
+import InfoTab, { GATEWAY_ACTION_MS } from './components/InfoTab.jsx'
 import LogsTab from './components/LogsTab.jsx'
 import NodesTab from './components/NodesTab.jsx'
 import ScenesTab from './components/ScenesTab.jsx'
@@ -12,7 +12,7 @@ import './App.css'
 const PHASES = {
   offline: { label: 'Offline', title: 'Not running inside a Control4 Director web tab — no data or commands' },
   connecting: { label: 'Connecting…', title: 'Waiting for the driver to connect to the gateway' },
-  syncing: { label: 'Syncing…', title: 'Requesting the latest data from the driver' },
+  syncing: { label: 'Syncing…', title: 'Waiting for the driver to re-read nodes, groups and scenes from the gateway' },
   error: { label: 'Sync failed', title: 'The last data request failed — press Refresh to retry' },
 }
 
@@ -43,7 +43,8 @@ export default function App() {
   const [selectedNode, setSelectedNode] = useState(null)
   const [selectedGroup, setSelectedGroup] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [busy, setBusy] = useState(false)
+  // 'restart' | 'factoryReset' while that gateway action's animation runs
+  const [busy, setBusy] = useState(null)
   const [toast, setToast] = useState(null)
   const toastTimer = useRef()
 
@@ -56,7 +57,7 @@ export default function App() {
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const api = useGateway(notify)
-  const { gateway, nodes, groups, scenes, phase, link } = api
+  const { gateway, nodes, groups, scenes, phase, link, waiting } = api
   const loading = phase === 'connecting' || phase === 'syncing'
   const showLink = phase !== 'offline' && phase !== 'connecting'
   // The Nodes tab leaves out hidden kinds (shades for now); Groups and Scenes
@@ -78,11 +79,11 @@ export default function App() {
     if (nodes.find((n) => n.id === id)?.online) api.requestNodeState([id])
   }
 
-  const runGatewayAction = (label, confirmText, action) => {
+  const runGatewayAction = (key, label, confirmText, action) => {
     if (!window.confirm(confirmText)) return
-    setBusy(true)
+    setBusy(key)
     action().then(() => notify(`${label} sent to gateway`))
-    setTimeout(() => setBusy(false), 3000)
+    setTimeout(() => setBusy(null), GATEWAY_ACTION_MS)
   }
 
   return (
@@ -108,8 +109,10 @@ export default function App() {
           className="btn btn-outline"
           onClick={refresh}
           disabled={refreshing || loading || phase === 'offline'}
+          aria-busy={refreshing || phase === 'syncing'}
         >
-          <span className={refreshing || phase === 'syncing' ? 'spin' : ''}><RefreshIcon /></span> Refresh
+          <span className={refreshing || phase === 'syncing' ? 'spin' : ''}><RefreshIcon /></span>{' '}
+          {refreshing || phase === 'syncing' ? 'Refreshing…' : 'Refresh'}
         </button>
       </header>
 
@@ -129,8 +132,8 @@ export default function App() {
       </nav>
 
       <div className="banner">
-        Node, group and gateway data update automatically as the gateway reports status. Press{' '}
-        <strong>Refresh</strong> (top right) to re-read everything from the gateway.
+        The driver re-reads nodes, groups and scenes from the gateway every 15 s, and the panel updates as
+        they change. Press <strong>Refresh</strong> (top right) to re-read everything now.
       </div>
 
       <main className="content">
@@ -138,9 +141,10 @@ export default function App() {
           <InfoTab
             gateway={gateway}
             busy={busy}
-            onRestart={() => runGatewayAction('Restart', 'Soft-restart the gateway?', api.restart)}
+            onRestart={() => runGatewayAction('restart', 'Restart', 'Soft-restart the gateway?', api.restart)}
             onFactoryReset={() =>
               runGatewayAction(
+                'factoryReset',
                 'Factory reset',
                 'Factory reset erases all mesh configuration on the gateway. Continue?',
                 api.factoryReset,
@@ -151,7 +155,7 @@ export default function App() {
         {tab === 'nodes' && (
           <NodesTab
             nodes={visibleNodes}
-            loading={loading}
+            waiting={waiting.nodes}
             selectedId={selectedNode}
             onSelect={selectNode}
             onUpdate={api.controlNode}
@@ -160,7 +164,7 @@ export default function App() {
         {tab === 'groups' && (
           <GroupsTab
             groups={groups}
-            loading={loading}
+            waiting={waiting.groups}
             nodes={nodes}
             selectedId={selectedGroup}
             onSelect={setSelectedGroup}
@@ -168,7 +172,7 @@ export default function App() {
           />
         )}
         {tab === 'scenes' && (
-          <ScenesTab scenes={scenes} nodes={nodes} loading={loading} onRecall={api.recallScene} notify={notify} />
+          <ScenesTab scenes={scenes} nodes={nodes} waiting={waiting.scenes} onRecall={api.recallScene} notify={notify} />
         )}
         {tab === 'logs' && <LogsTab notify={notify} />}
       </main>

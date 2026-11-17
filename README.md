@@ -8,7 +8,7 @@ The panel runs as a Control4 Composer web tab. It talks to the HT-Mesh Lua drive
 
 The panel has no built-in data. Everything comes from the driver's variables. Opened outside Director (for example with `npm run dev`), it shows **Offline** in the header, displays empty states, and disables Refresh.
 
-**Loading:** once the page has loaded, the panel waits 3 seconds so the driver can connect to the gateway (the header shows *Connecting…*). Then it sends `Gateway.SYNC`, which asks the driver to rewrite every data variable, and reads the variables back (*Syncing…*). If that fails, the header shows *Sync failed*, and Refresh retries.
+**Loading:** once the page has loaded, the panel waits 3 seconds so the driver can connect to the gateway (the header shows *Connecting…*). Then it sends `Gateway.SYNC`, which asks the driver to rewrite every data variable, and reads the variables back (*Syncing…*). If that fails, the header shows *Sync failed*, and Refresh retries. Until the driver has delivered a list (and while the live link is down), the Nodes, Groups and Scenes tabs show *Waiting for gateway…* rather than an empty state: the driver starts every variable empty and fills it after its first poll.
 
 Built with React 19 and Vite 8, linted with Oxlint.
 
@@ -34,9 +34,9 @@ The active tab is kept in the URL hash, so you can link straight to a tab: `#inf
 
 - **Information:** gateway identity, runtime status, network and location (read-only), plus Restart (soft) and Factory Reset. Both ask for confirmation.
 - **Nodes:** a card for each node with a power switch, online/offline state, device type and node ID. Selecting a node opens **Node Control**: a Control panel (left) and a Status panel (right) for that node, and asks the driver for the node's live state. Offline nodes can be selected, but their controls are disabled. Controls follow the light's mode: mode 1 lights get Power and Brightness, mode 2 lights get Power, CCT, Hue, Saturation and Lightness.
-- **Groups:** the same card layout and **Group Control** section. Commands go to the group address, and the Status panel lists the group's address, type and member nodes.
+- **Groups:** the same card layout and **Group Control** section. Each group shows its members as lights and shades, using the driver's rule (a `product_id` of `HYP-SH-HT` or starting with `HYP-SH-` is a shade; anything else is a light), e.g. "2 lights · 1 shade · 1 not found" ("not found": a member id missing from Nodes). Commands go to the group address, and the Status panel lists the group's address, type and member nodes.
 - **Scenes:** each scene with its number and registered nodes, and a **Recall** button.
-- **Refresh** (top right): runs the same sync as on load: `Gateway.SYNC`, then re-reads every variable. Variables also update live without it.
+- **Refresh** (top right): runs the same sync as on load: `Gateway.SYNC`, then re-reads every variable. The button shows *Refreshing…* until Nodes, Groups and Scenes have each changed, or for at most 15 s, and won't send a second sync meanwhile. Without it, the driver re-reads nodes, groups and scenes from the gateway every 15 s and the variables update live.
 
 ## Project structure
 
