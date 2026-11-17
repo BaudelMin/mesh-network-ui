@@ -82,7 +82,8 @@ export default function App() {
   const runGatewayAction = (key, label, confirmText, action) => {
     if (!window.confirm(confirmText)) return
     setBusy(key)
-    action().then(() => notify(`${label} sent to gateway`))
+    // Restart's button animation already tells the user; no toast for it.
+    action().then(() => key !== 'restart' && notify(`${label} sent to gateway`))
     setTimeout(() => setBusy(null), GATEWAY_ACTION_MS)
   }
 
