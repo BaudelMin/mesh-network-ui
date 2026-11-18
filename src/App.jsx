@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isHiddenNode } from './api/adapters.js'
 import { useGateway } from './api/useGateway.js'
-import ConfirmDialog from './components/ConfirmDialog.jsx'
 import GroupsTab from './components/GroupsTab.jsx'
 import InfoTab, { GATEWAY_ACTION_MS } from './components/InfoTab.jsx'
 import LogsTab from './components/LogsTab.jsx'
@@ -21,41 +20,6 @@ const LINKS = {
   live: { label: 'Live', title: 'Receiving live updates from the driver' },
   polling: { label: 'Polling', title: 'Live updates unavailable — re-reading the driver every 10 s' },
   offline: { label: 'Offline', title: 'Cannot reach Director — the data shown may be out of date' },
-}
-
-// Gateway actions that need confirming first, with their dialog text.
-const GATEWAY_ACTIONS = {
-  restart: {
-    label: 'Restart',
-    title: 'Restart gateway?',
-    confirmLabel: 'Confirm Restart',
-    run: (api) => api.restart(),
-    body: (name) => (
-      <>
-        <p>
-          <strong>{name}</strong> will soft-restart now.
-        </p>
-        <p>
-          It goes offline for a short time, and nodes, groups and scenes can't be controlled until it reconnects.
-          Mesh configuration is not changed.
-        </p>
-      </>
-    ),
-  },
-  factoryReset: {
-    label: 'Factory reset',
-    title: 'Factory reset gateway?',
-    confirmLabel: 'Confirm Factory Reset',
-    run: (api) => api.factoryReset(),
-    body: (name) => (
-      <>
-        <p>
-          <strong>{name}</strong> will be reset to factory settings.
-        </p>
-        <p>This erases all mesh configuration on the gateway, and can't be undone.</p>
-      </>
-    ),
-  },
 }
 
 const TABS = [
@@ -81,8 +45,6 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
   // 'restart' | 'factoryReset' while that gateway action's animation runs
   const [busy, setBusy] = useState(null)
-  // The gateway action waiting for confirmation (see GATEWAY_ACTIONS), or null
-  const [pendingAction, setPendingAction] = useState(null)
   const [toast, setToast] = useState(null)
   const toastTimer = useRef()
 
@@ -117,16 +79,13 @@ export default function App() {
     if (nodes.find((n) => n.id === id)?.online) api.requestNodeState([id])
   }
 
-  // Runs once the user confirms it in the dialog.
-  const runGatewayAction = (key) => {
-    const { label, run } = GATEWAY_ACTIONS[key]
-    setPendingAction(null)
+  // Runs once the user has pressed the action's Confirm button (ConfirmButton).
+  const runGatewayAction = (key, label, action) => {
     setBusy(key)
     // Restart's button animation already tells the user; no toast for it.
-    run(api).then(() => key !== 'restart' && notify(`${label} sent to gateway`))
+    action().then(() => key !== 'restart' && notify(`${label} sent to gateway`))
     setTimeout(() => setBusy(null), GATEWAY_ACTION_MS)
   }
-  const gatewayName = gateway.identity.name || gateway.id || 'the gateway'
 
   return (
     <div className="app">
@@ -183,8 +142,8 @@ export default function App() {
           <InfoTab
             gateway={gateway}
             busy={busy}
-            onRestart={() => setPendingAction('restart')}
-            onFactoryReset={() => setPendingAction('factoryReset')}
+            onRestart={() => runGatewayAction('restart', 'Restart', api.restart)}
+            onFactoryReset={() => runGatewayAction('factoryReset', 'Factory reset', api.factoryReset)}
           />
         )}
         {tab === 'nodes' && (
@@ -211,18 +170,6 @@ export default function App() {
         )}
         {tab === 'logs' && <LogsTab notify={notify} />}
       </main>
-
-      {pendingAction && (
-        <ConfirmDialog
-          title={GATEWAY_ACTIONS[pendingAction].title}
-          confirmLabel={GATEWAY_ACTIONS[pendingAction].confirmLabel}
-          icon={pendingAction === 'restart' ? <RefreshIcon /> : undefined}
-          onConfirm={() => runGatewayAction(pendingAction)}
-          onCancel={() => setPendingAction(null)}
-        >
-          {GATEWAY_ACTIONS[pendingAction].body(gatewayName)}
-        </ConfirmDialog>
-      )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

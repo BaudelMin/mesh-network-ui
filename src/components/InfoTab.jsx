@@ -1,3 +1,4 @@
+import ConfirmButton from './ConfirmButton.jsx'
 import { AlertIcon, RefreshIcon } from './icons.jsx'
 import { Card, Chip, ReadOnly } from './ui.jsx'
 
@@ -6,7 +7,6 @@ const SHOW_FACTORY_RESET = false
 
 // How long a gateway action button shows its busy animation (spinner + progress bar).
 export const GATEWAY_ACTION_MS = 5000
-const progressStyle = { '--progress-ms': `${GATEWAY_ACTION_MS}ms` }
 
 const bytes = (n) => (typeof n === 'number' ? `${n.toLocaleString('en-US')} B` : '')
 
@@ -25,7 +25,6 @@ function formatUptime(total) {
 export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
   const { identity: id, runtime: rt, network: net, location: loc } = gateway
   const actionsDisabled = Boolean(busy) || !gateway.available
-  const restarting = busy === 'restart'
 
   return (
     <div className="grid-2">
@@ -85,21 +84,27 @@ export default function InfoTab({ gateway, busy, onRestart, onFactoryReset }) {
         subtitle="Restart the gateway. Disabled while any HT Mesh operation or node OTA is in progress."
       >
         <div className="row">
-          <button
-            type="button"
-            className={`btn btn-primary ${restarting ? 'btn-progress' : ''}`}
-            style={restarting ? progressStyle : undefined}
+          <ConfirmButton
+            className="btn-primary"
+            icon={<RefreshIcon />}
+            label="Restart"
+            busy={busy === 'restart'}
+            busyLabel="Restarting…"
+            busyMs={GATEWAY_ACTION_MS}
             disabled={actionsDisabled}
-            aria-busy={restarting}
-            onClick={onRestart}
-          >
-            <span className={restarting ? 'spin' : ''}><RefreshIcon /></span>{' '}
-            {restarting ? 'Restarting…' : 'Restart'}
-          </button>
+            onConfirm={onRestart}
+          />
           {SHOW_FACTORY_RESET && (
-            <button type="button" className="btn btn-outline" disabled={actionsDisabled} onClick={onFactoryReset}>
-              <AlertIcon /> Factory Reset
-            </button>
+            <ConfirmButton
+              className="btn-outline"
+              icon={<AlertIcon />}
+              label="Factory Reset"
+              busy={busy === 'factoryReset'}
+              busyLabel="Resetting…"
+              busyMs={GATEWAY_ACTION_MS}
+              disabled={actionsDisabled}
+              onConfirm={onFactoryReset}
+            />
           )}
         </div>
       </Card>
