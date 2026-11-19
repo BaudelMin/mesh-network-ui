@@ -130,7 +130,7 @@ export function useGateway(notify) {
         return done
       })
       .then((complete) => {
-        const message = complete ? 'Gateway data refreshed' : 'Refresh requested — data updates as the gateway answers'
+        const message = complete ? 'Gateway data loaded' : 'Sync requested — data updates as the gateway answers'
         logInfo('gateway', 'sync() finished', message)
         setPhase('ready')
         return message
@@ -257,6 +257,5 @@ export function useGateway(notify) {
     recallScene: (sceneId) => sendCommand('Scene.RECALL', { scene_id: sceneId }),
     restart: () => sendCommand('Gateway.RESTART', {}),
     factoryReset: () => sendCommand('Gateway.RESTART', { reset: 'factory' }),
-    refresh: sync,
   }
 }

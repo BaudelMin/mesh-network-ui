@@ -16,7 +16,7 @@ export default function ScenesTab({ scenes, nodes, waiting, onRecall, notify }) 
                 <div>
                   <h3 className="item-title">{s.name}</h3>
                   <p className="muted small">
-                    scene_id: {s.id} · {s.members.length} {s.members.length === 1 ? 'node' : 'nodes'} registered
+                    {s.members.length} {s.members.length === 1 ? 'node' : 'nodes'} registered
                   </p>
                 </div>
                 {s.number !== undefined && <span className="badge">#{s.number}</span>}

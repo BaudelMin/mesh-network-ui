@@ -35,7 +35,6 @@ export default function GroupsTab({ groups, nodes, waiting, selectedId, onSelect
         info={
           selected
             ? [
-                { label: 'Group ID', value: selected.id },
                 { label: 'Address', value: hex(selected.address) },
                 { label: 'Type', value: typeLabel(selected.type) },
                 { label: 'Devices', value: describeCounts(memberCounts(selected.members, nodes)) },

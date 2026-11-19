@@ -20,7 +20,6 @@ export default function NodesTab({ nodes, waiting, selectedId, onSelect, onUpdat
         info={
           selected
             ? [
-                { label: 'Node ID', value: selected.id },
                 { label: 'Type', value: typeLabel(selected.type) },
                 { label: 'Product', value: selected.product || '—' },
                 { label: 'MAC', value: selected.mac || '—' },
@@ -55,7 +54,6 @@ export default function NodesTab({ nodes, waiting, selectedId, onSelect, onUpdat
                 <span className={`dot ${node.online ? 'dot-on' : 'dot-bad'}`} />
                 {node.online ? 'Online' : 'Offline'}
                 <span className="type-tag">{typeLabel(node.type)}</span>
-                <span className="mono entity-card-id">{node.id}</span>
               </EntityCard>
             ))}
           </div>
