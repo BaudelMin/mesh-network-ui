@@ -6,14 +6,14 @@ import InfoTab, { GATEWAY_ACTION_MS } from './components/InfoTab.jsx'
 import LogsTab from './components/LogsTab.jsx'
 import NodesTab from './components/NodesTab.jsx'
 import ScenesTab from './components/ScenesTab.jsx'
-import { GridIcon, InfoIcon, LogIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
+import { GridIcon, InfoIcon, LogIcon, RefreshIcon, SwapIcon, TriangleIcon, UsersIcon } from './components/icons.jsx'
 import './App.css'
 
 const PHASES = {
   offline: { label: 'Offline', title: 'Not running inside a Control4 Director web tab — no data or commands' },
   connecting: { label: 'Connecting…', title: 'Waiting for the driver to connect to the gateway' },
   syncing: { label: 'Syncing…', title: 'Waiting for the driver to re-read nodes, groups and scenes from the gateway' },
-  error: { label: 'Sync failed', title: 'The last data request failed — data updates on the next gateway poll' },
+  error: { label: 'Sync failed', title: 'The last data request failed — press Refresh to retry' },
 }
 
 const LINKS = {
@@ -42,6 +42,7 @@ export default function App() {
   }
   const [selectedNode, setSelectedNode] = useState(null)
   const [selectedGroup, setSelectedGroup] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
   // 'restart' | 'factoryReset' while that gateway action's animation runs
   const [busy, setBusy] = useState(null)
   const [toast, setToast] = useState(null)
@@ -57,10 +58,20 @@ export default function App() {
 
   const api = useGateway(notify)
   const { gateway, nodes, groups, scenes, phase, link, waiting } = api
+  const loading = phase === 'connecting' || phase === 'syncing'
   const showLink = phase !== 'offline' && phase !== 'connecting'
   // The Nodes tab leaves out hidden kinds (shades for now); Groups and Scenes
   // get every node so they can count and name all members.
   const visibleNodes = nodes.filter((n) => !isHiddenNode(n))
+
+  const refresh = () => {
+    setRefreshing(true)
+    api
+      .refresh()
+      .then((message) => notify(message))
+      .catch((err) => notify(`Refresh failed: ${err.message}`))
+      .finally(() => setRefreshing(false))
+  }
 
   // Selecting a node asks the driver for its live state (nodes don't push their own changes).
   const selectNode = (id) => {
@@ -93,6 +104,16 @@ export default function App() {
             </span>
           )}
         </div>
+        <button
+          type="button"
+          className="btn btn-outline"
+          onClick={refresh}
+          disabled={refreshing || loading || phase === 'offline'}
+          aria-busy={refreshing || phase === 'syncing'}
+        >
+          <span className={refreshing || phase === 'syncing' ? 'spin' : ''}><RefreshIcon /></span>{' '}
+          {refreshing || phase === 'syncing' ? 'Refreshing…' : 'Refresh'}
+        </button>
       </header>
 
       <nav className="tabs" role="tablist">

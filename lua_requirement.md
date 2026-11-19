@@ -10,7 +10,7 @@ The driver (`hypnotik-ht-mesh-gw-r01`) now reads nodes, groups and scenes in one
 
 1. **One inventory poll.** `Gateway.NODES`, `Gateway.GROUPS` and `Gateway.SCENES` are sent from one place only, always in the order Nodes → Groups → Scenes, each after the previous reply arrives. The poll runs about 1 s after the driver connects to the gateway, every **15 s** (it used to be Nodes every 30 s, Groups and Scenes every 5 min), and on `Gateway.SYNC`, the Composer action `Refresh Scenes` and after `Group Delete`. The panel never sends `Gateway.NODES`, `Gateway.GROUPS` or `Gateway.SCENES` (the driver rejects them); it uses `Gateway.SYNC` to refresh.
 2. **Variables update on every reply.** Each reply rewrites `Nodes`, `Groups` or `Scenes` when the content changed. The driver also saves the list to Control4 persistent storage, and never saves an empty reply.
-3. **`Gateway.SYNC`** runs `Gateway.INFO` + `Gateway.STATUS`, then the inventory poll (Nodes → Groups → Scenes), then `Node.STATE` for alive nodes, and force-writes all four variables. A read that fails is written as `[]` (`{}` for `Information`). The panel sends it once, on page load, and never sends a second `Gateway.SYNC` while one is running. It has no Refresh button: data updates come from the 15 s poll.
+3. **`Gateway.SYNC`** runs `Gateway.INFO` + `Gateway.STATUS`, then the inventory poll (Nodes → Groups → Scenes), then `Node.STATE` for alive nodes, and force-writes all four variables. A read that fails is written as `[]` (`{}` for `Information`). The panel shows Refresh as busy until `Nodes`, `Groups` and `Scenes` have each changed since the click, or for at most 15 s, and never sends a second `Gateway.SYNC` while one is running.
 4. **Node count per group.** On every poll the driver pushes each group driver's "Nodes Count": member lights for the light group driver, member shades for the shade group driver. A member counts only if its id is in `Nodes`. A node is a shade when its `product_id`, upper-cased, is `HYP-SH-HT` or starts with `HYP-SH-`; every other node is a light, including one with no `product_id`. The panel uses the same rule (`isShadeProduct` in `src/api/adapters.js`) and shows each group as e.g. "2 lights · 1 shade · 1 not found", where "not found" is a member id that isn't in `Nodes`.
 5. **Driver start or disconnect.** All four variables start empty (`{}` / `[]`) when the driver starts, and on disconnect every node has `is_alive: false`. Real data arrives after the first poll, about 1–2 s after the driver connects. The panel therefore shows "Waiting for gateway…" instead of "No nodes / groups / scenes" while the link isn't live, or before a list has held any items since the page loaded. Once the link is live and a list that had items becomes `[]`, it shows the normal empty state.
 
@@ -115,9 +115,12 @@ broker.executeCommand('SetDeviceState', { command: 'Gateway.SYNC', params: '{}',
 
 `Gateway.SYNC` is handled by the driver and never forwarded to the gateway.
 
-It sends it once, **on page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `Gateway.SYNC`. Until then its header shows *Connecting…*. There is no Refresh button; after load, data updates come from the driver's 15 s inventory poll.
+It does this at two times:
 
-Once `ExecuteCommand` returns, the panel re-reads the four variables. There is no completion signal: each variable the driver rewrites as the gateway answers reaches the panel over the live feed (or the next 10 s re-read) and updates the view by itself. The header shows *Syncing…* until `Nodes`, `Groups` and `Scenes` have each changed, or for at most 15 s.
+- **On page load:** once all content has loaded, the panel waits **3 seconds** so the driver can establish its gateway connection, then sends `Gateway.SYNC`. Until then its header shows *Connecting…*.
+- **On Refresh:** every press of the top-right **Refresh** button sends it again.
+
+Once `ExecuteCommand` returns, the panel re-reads the four variables. There is no completion signal: each variable the driver rewrites as the gateway answers reaches the panel over the live feed (or the next 10 s re-read) and updates the view by itself. The Refresh button stays busy until `Nodes`, `Groups` and `Scenes` have each changed since the click, or for at most 15 s. While it is busy the panel doesn't send another `Gateway.SYNC`.
 
 The driver must, on `Gateway.SYNC`:
 
@@ -136,7 +139,7 @@ Params are listed as the panel sends them, in panel ranges. `fadetime` (ms, opti
 
 | `command`          | Required params (panel)                         | Wire `data` after conversion                 | When the panel sends it                     |
 | ------------------ | ----------------------------------------------- | -------------------------------------------- | ------------------------------------------- |
-| `Gateway.SYNC`     | —                                               | not forwarded (driver-local, §3a)            | 3 s after load                              |
+| `Gateway.SYNC`     | —                                               | not forwarded (driver-local, §3a)            | 3 s after load, and Refresh                 |
 | `Gateway.RESTART`  | — (optional `reset: "factory"`)                 | same                                         | Restart / Factory Reset buttons             |
 | `Node.ONOFF`       | `node_id`, `onoff` (0/1)                        | same                                         | Power toggle / On-Off buttons               |
 | `Node.BRIGHTNESS`  | `node_id`, `brightness` (0–100)                 | same                                         | Brightness slider (mode 1 nodes)            |
