@@ -1,3 +1,4 @@
+import { DEFAULT_LIGHTNESS } from '../../api/adapters.js'
 import { OnOff } from '../../components/ui.jsx'
 
 function Slider({ label, value, min, max, step = 1, display, track, disabled, onChange }) {
@@ -31,7 +32,7 @@ export default function LightControl({ state, disabled, onChange }) {
   const showColor = state.mode !== 1
   const brightness = state.brightness ?? 0
   const cct = state.cct ?? 4000
-  const hsl = state.hsl ?? { h: 0, s: 0, l: 0 }
+  const hsl = state.hsl ?? { h: 0, s: 0, l: DEFAULT_LIGHTNESS }
   const setHsl = (patch) => onChange({ hsl: { ...hsl, ...patch } })
 
   return (

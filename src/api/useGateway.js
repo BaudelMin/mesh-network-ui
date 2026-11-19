@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  DEFAULT_LIGHTNESS,
   EMPTY_GATEWAY,
   EMPTY_GROUPS,
   EMPTY_NODES,
@@ -27,6 +28,48 @@ const LISTS = [VARIABLES.nodes, VARIABLES.groups, VARIABLES.scenes]
 
 const patchById = (id, patch) => (list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x))
 
+// The part of a group command a member node takes on: power always, and only the
+// channels its mode has (mode 1: brightness; mode 2: CCT / HSL; unknown: all).
+function memberPatch(node, patch) {
+  const out = {}
+  if (patch.on !== undefined) out.on = patch.on
+  if (patch.brightness !== undefined && node.mode !== 2) out.brightness = patch.brightness
+  if (patch.cct !== undefined && node.mode !== 1) out.cct = patch.cct
+  if (patch.hsl !== undefined && node.mode !== 1) out.hsl = patch.hsl
+  return out
+}
+
+// Applies a group command to its online light members in the Nodes list, so the
+// Nodes tab follows the group right away. The driver re-reads the members'
+// state after every group command, and that Nodes update is authoritative.
+const patchMembers = (memberIds, patch) => (list) =>
+  list.map((n) =>
+    memberIds.includes(n.id) && n.kind === 'light' && n.online ? { ...n, ...memberPatch(n, patch) } : n,
+  )
+
+/*
+ * Lightness starts at DEFAULT_LIGHTNESS (50 %) for every node and group on page
+ * load, whatever the driver reports. The real value takes over for that light as
+ * soon as it has one from somewhere else:
+ *   - the driver reports a lightness different from the one it reported first, or
+ *   - the user (or a group command, for its members) sets the colour in the panel.
+ * memo = { first: Map(key -> lightness first reported), released: Set(key) },
+ * key = 'Node:<id>' | 'Group:<id>', for the life of the page.
+ */
+function applyDefaultLightness(memo, scope, list) {
+  return list.map((item) => {
+    const key = `${scope}:${item.id}`
+    if (memo.released.has(key) || !item.hsl) return item
+    const reported = item.hsl.l
+    if (!memo.first.has(key)) memo.first.set(key, reported)
+    if (reported !== memo.first.get(key)) {
+      memo.released.add(key)
+      return item
+    }
+    return { ...item, hsl: { ...item.hsl, l: DEFAULT_LIGHTNESS } }
+  })
+}
+
 export function useGateway(notify) {
   const client = getClient()
   // Start from the empty defaults; an empty variable maps back to them (adapters.js).
@@ -45,6 +88,8 @@ export function useGateway(notify) {
   const timers = useRef({})
   // The running sync: { armed, pending: Set of list variables still to change, finish(complete) }
   const syncRun = useRef(null)
+  // Default-lightness bookkeeping (applyDefaultLightness)
+  const lightness = useRef({ first: new Map(), released: new Set() })
 
   // Ask the driver to re-read the gateway and rewrite every data variable, then
   // read back what it holds now. The driver has no completion signal, so the
@@ -121,8 +166,8 @@ export function useGateway(notify) {
     const subs = [
       client.onLink(setLink),
       client.onVariable(VARIABLES.info, (d) => setGateway(toGateway(d))),
-      onList(VARIABLES.nodes, toNodes, setNodes),
-      onList(VARIABLES.groups, toGroups, setGroups),
+      onList(VARIABLES.nodes, (d) => applyDefaultLightness(lightness.current, 'Node', toNodes(d)), setNodes),
+      onList(VARIABLES.groups, (d) => applyDefaultLightness(lightness.current, 'Group', toGroups(d)), setGroups),
       onList(VARIABLES.scenes, toScenes, setScenes),
     ]
     const timer =
@@ -168,6 +213,13 @@ export function useGateway(notify) {
       return
     }
     setList(patchById(id, patch)) // optimistic; the next variable update is authoritative
+    const members = scope === 'Group' ? (groups.find((g) => g.id === id)?.members ?? []) : []
+    if (members.length) setNodes(patchMembers(members, patch))
+    // A colour set in the panel replaces the load-time default (applyDefaultLightness).
+    if (patch.hsl !== undefined) {
+      lightness.current.released.add(`${scope}:${id}`)
+      members.forEach((m) => lightness.current.released.add(`Node:${m}`))
+    }
     requests.forEach((r) => (patch.on !== undefined ? send(r) : sendDebounced(r)))
   }
 

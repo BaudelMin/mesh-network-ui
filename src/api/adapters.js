@@ -28,6 +28,9 @@ function toArray(v) {
 const list = (v) => toArray(v).filter((x) => x && typeof x === 'object')
 const ids = (v) => toArray(v).map(str).filter(Boolean)
 
+// Lightness shown and sent when a light hasn't reported one (0 would be black).
+export const DEFAULT_LIGHTNESS = 50
+
 export const EMPTY_LIGHT_STATE = {
   on: undefined,
   brightness: undefined,
@@ -47,7 +50,7 @@ function lightState(state) {
     masterBrightness: num(s.master_brightness),
     cct: num(s.cct),
     cctBrightness: num(s.cct_brightness),
-    hsl: hasHsl ? { h: num(s.hue) ?? 0, s: num(s.saturation) ?? 0, l: num(s.lightness) ?? 0 } : undefined,
+    hsl: hasHsl ? { h: num(s.hue) ?? 0, s: num(s.saturation) ?? 0, l: num(s.lightness) ?? DEFAULT_LIGHTNESS } : undefined,
   }
 }
 
