@@ -73,12 +73,6 @@ export default function App() {
       .finally(() => setRefreshing(false))
   }
 
-  // Selecting a node asks the driver for its live state (nodes don't push their own changes).
-  const selectNode = (id) => {
-    setSelectedNode(id)
-    if (nodes.find((n) => n.id === id)?.online) api.requestNodeState([id])
-  }
-
   // Runs once the user has pressed the action's Confirm button (ConfirmButton).
   const runGatewayAction = (key, label, action) => {
     setBusy(key)
@@ -145,7 +139,7 @@ export default function App() {
             nodes={visibleNodes}
             waiting={waiting.nodes}
             selectedId={selectedNode}
-            onSelect={selectNode}
+            onSelect={setSelectedNode}
             onUpdate={api.controlNode}
           />
         )}

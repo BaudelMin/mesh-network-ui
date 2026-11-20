@@ -253,7 +253,6 @@ export function useGateway(notify) {
     scenes,
     controlNode: control('Node', setNodes),
     controlGroup: control('Group', setGroups),
-    requestNodeState: (ids) => sendCommand('Node.STATE', { nodes: ids.slice(0, 16) }),
     recallScene: (sceneId) => sendCommand('Scene.RECALL', { scene_id: sceneId }),
     restart: () => sendCommand('Gateway.RESTART', {}),
     factoryReset: () => sendCommand('Gateway.RESTART', { reset: 'factory' }),

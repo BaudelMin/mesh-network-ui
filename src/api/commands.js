@@ -33,7 +33,6 @@ export const COMMAND_SPECS = {
   'Node.BRIGHTNESS': { required: [nodeId, brightness], optional: [fadetime] },
   'Node.CCT': { required: [nodeId, cct], optional: [fadetime] },
   'Node.HSL': { required: [nodeId, hue, saturation, lightness], optional: [fadetime] },
-  'Node.STATE': { required: [{ name: 'nodes', type: 'array', minItems: 1, maxItems: 16 }], optional: [] },
 
   'Group.ONOFF': { required: [groupId, onoff], optional: [fadetime] },
   'Group.BRIGHTNESS': { required: [groupId, brightness], optional: [fadetime] },
@@ -45,13 +44,6 @@ export const COMMAND_SPECS = {
 
 function checkParam(command, spec, value) {
   const where = `${command}.${spec.name}`
-  if (spec.type === 'array') {
-    if (!Array.isArray(value)) throw new Error(`${where} must be an array`)
-    if (value.length < spec.minItems || value.length > spec.maxItems) {
-      throw new Error(`${where} must have ${spec.minItems}–${spec.maxItems} items`)
-    }
-    return value
-  }
   if (typeof value !== spec.type || (spec.type === 'string' && value === '') || Number.isNaN(value)) {
     throw new Error(`${where} must be a non-empty ${spec.type}`)
   }
@@ -86,7 +78,6 @@ export const DEVICE_STATE_COMMAND = 'SetDeviceState'
  *   command  string   e.g. "Node.ONOFF"
  *   params   string   JSON of the command's params, panel ranges
  *   id       string   target node / group / scene id; "" for gateway commands
- *                     and multi-node commands (Node.STATE carries params.nodes)
  *   isGroup  boolean  command targets a group  (Group.*)
  *   isScene  boolean  command targets a scene  (Scene.*)
  */
