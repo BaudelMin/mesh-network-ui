@@ -80,3 +80,21 @@ export const PlayIcon = () => (
     <path d="M6 4l14 8-14 8z" />
   </svg>
 )
+
+export const ChevronUpIcon = () => (
+  <svg {...base} strokeWidth={2.5}>
+    <path d="M6 15l6-6 6 6" />
+  </svg>
+)
+
+export const ChevronDownIcon = () => (
+  <svg {...base} strokeWidth={2.5}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+)
+
+export const StopIcon = () => (
+  <svg {...base} fill="currentColor" stroke="none">
+    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+  </svg>
+)

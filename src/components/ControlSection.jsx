@@ -19,7 +19,8 @@ function StatusList({ rows }) {
 
 /*
  * Control (left) + Status (right) for one node or group. The UI inside both
- * panels comes from the device registry, chosen by `target.type`.
+ * panels comes from the device registry: a node by `target.kind` (from its
+ * product_id: light or shade), a group by `target.type`.
  *
  *   target        the selected node/group, or null
  *   info          entity-specific status rows shown before the device rows
@@ -27,7 +28,8 @@ function StatusList({ rows }) {
  *   disabledNote  when set, controls are disabled and this note is shown
  */
 export default function ControlSection({ title, subtitle, target, info = [], online, disabledNote, emptyText, onChange }) {
-  const device = target && getDeviceType(target.type)
+  const deviceKey = target && (target.kind ?? target.type)
+  const device = target && getDeviceType(deviceKey)
 
   let control
   let status
@@ -35,7 +37,7 @@ export default function ControlSection({ title, subtitle, target, info = [], onl
     control = <p className="empty">{emptyText}</p>
     status = <p className="empty">Nothing selected.</p>
   } else if (!device) {
-    control = <p className="empty">No control UI for device type “{target.type}” yet.</p>
+    control = <p className="empty">No control UI for device type “{deviceKey}” yet.</p>
     status = <StatusList rows={info} />
   } else {
     const { Control } = device

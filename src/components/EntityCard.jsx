@@ -15,10 +15,11 @@ function Switch({ on, disabled, onChange, label }) {
 }
 
 // Compact card for a node or group: power switch + name + one meta line. Click selects it.
-export default function EntityCard({ name, on, disabled, selected, onToggle, onSelect, children }) {
+// `control` replaces the power switch (shades use an open / close toggle).
+export default function EntityCard({ name, on, disabled, selected, onToggle, onSelect, control, children }) {
   return (
     <article className={`entity-card ${selected ? 'selected' : ''}`}>
-      <Switch on={on} disabled={disabled} label={`Power ${name}`} onChange={onToggle} />
+      {control ?? <Switch on={on} disabled={disabled} label={`Power ${name}`} onChange={onToggle} />}
       <button type="button" className="entity-card-body" onClick={onSelect} aria-pressed={selected}>
         <span className="entity-card-name">{name}</span>
         <span className="entity-card-meta">{children}</span>

@@ -1,4 +1,6 @@
 import { typeLabel } from '../devices/index.js'
+import { describeShade } from '../devices/shade/motion.js'
+import ShadeToggle from '../devices/shade/ShadeToggle.jsx'
 import ControlSection from './ControlSection.jsx'
 import EntityCard from './EntityCard.jsx'
 
@@ -20,7 +22,7 @@ export default function NodesTab({ nodes, waiting, selectedId, onSelect, onUpdat
         info={
           selected
             ? [
-                { label: 'Type', value: typeLabel(selected.type) },
+                { label: 'Type', value: typeLabel(selected.kind) },
                 { label: 'Product', value: selected.product || '—' },
                 { label: 'MAC', value: selected.mac || '—' },
                 { label: 'Connection', value: selected.online ? 'online' : 'offline' },
@@ -41,21 +43,34 @@ export default function NodesTab({ nodes, waiting, selectedId, onSelect, onUpdat
           <p className="empty">{waiting ? 'Waiting for gateway…' : 'No nodes provisioned yet.'}</p>
         ) : (
           <div className="entity-grid">
-            {nodes.map((node) => (
-              <EntityCard
-                key={node.id}
-                name={node.name}
-                on={node.on && node.online}
-                disabled={!node.online}
-                selected={node.id === selectedId}
-                onToggle={(on) => onUpdate(node.id, { on })}
-                onSelect={() => onSelect(node.id)}
-              >
-                <span className={`dot ${node.online ? 'dot-on' : 'dot-bad'}`} />
-                {node.online ? 'Online' : 'Offline'}
-                <span className="type-tag">{typeLabel(node.type)}</span>
-              </EntityCard>
-            ))}
+            {nodes.map((node) => {
+              const shade = node.kind === 'shade'
+              return (
+                <EntityCard
+                  key={node.id}
+                  name={node.name}
+                  on={node.on && node.online}
+                  disabled={!node.online}
+                  selected={node.id === selectedId}
+                  onToggle={(on) => onUpdate(node.id, { on })}
+                  onSelect={() => onSelect(node.id)}
+                  control={
+                    shade ? (
+                      <ShadeToggle
+                        name={node.name}
+                        shade={node.shade}
+                        disabled={!node.online}
+                        onAction={(shadeAction) => onUpdate(node.id, { shadeAction })}
+                      />
+                    ) : undefined
+                  }
+                >
+                  <span className={`dot ${node.online ? 'dot-on' : 'dot-bad'}`} />
+                  {node.online ? (shade && node.shade ? describeShade(node.shade) : 'Online') : 'Offline'}
+                  <span className={`type-tag ${shade ? 'type-shade' : ''}`}>{typeLabel(node.kind)}</span>
+                </EntityCard>
+              )
+            })}
           </div>
         )}
       </section>

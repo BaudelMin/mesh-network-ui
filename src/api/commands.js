@@ -12,6 +12,7 @@
  *   lightness   0–100   (percent)   -> 0–65535
  *   brightness  0–100   (percent)   unchanged
  *   cct         2700–6500 (kelvin)  unchanged
+ *   position    0–100   (% open)    unchanged   (Node.SHADE)
  */
 
 const nodeId = { name: 'node_id', type: 'string' }
@@ -24,6 +25,19 @@ const saturation = { name: 'saturation', type: 'number', min: 0, max: 100 }
 const lightness = { name: 'lightness', type: 'number', min: 0, max: 100 }
 const fadetime = { name: 'fadetime', type: 'number', min: 0 }
 
+// Node.SHADE actions (the shade driver's list, ht_shade_cmd_web.lua). The panel
+// sends them the same way as the light commands: SetDeviceState
+// { command: 'Node.SHADE', params: { node_id, action, position? | reversed? } }.
+export const SHADE_ACTIONS = [
+  'open', 'close', 'stop', 'position', 'favorite', 'toggle', 'jog_up', 'jog_down',
+  'calib_open', 'calib_close', 'set_open_limit', 'set_close_limit', 'set_favorite',
+  'clear_open_limit', 'clear_close_limit', 'clear_favorite', 'clear_limits',
+  'direction', 'factory_reset', 'state',
+]
+const shadeAction = { name: 'action', type: 'string', values: SHADE_ACTIONS }
+const position = { name: 'position', type: 'number', min: 0, max: 100 }
+const reversed = { name: 'reversed', type: 'boolean' }
+
 export const COMMAND_SPECS = {
   // Handled by the driver itself (not forwarded): rewrite every data variable.
   'Gateway.SYNC': { required: [], optional: [] },
@@ -33,6 +47,7 @@ export const COMMAND_SPECS = {
   'Node.BRIGHTNESS': { required: [nodeId, brightness], optional: [fadetime] },
   'Node.CCT': { required: [nodeId, cct], optional: [fadetime] },
   'Node.HSL': { required: [nodeId, hue, saturation, lightness], optional: [fadetime] },
+  'Node.SHADE': { required: [nodeId, shadeAction], optional: [position, reversed] },
 
   'Group.ONOFF': { required: [groupId, onoff], optional: [fadetime] },
   'Group.BRIGHTNESS': { required: [groupId, brightness], optional: [fadetime] },
@@ -108,4 +123,20 @@ export function lightRequests(scope, id, patch) {
     requests.push(buildRequest(`${scope}.HSL`, { ...target, hue: h, saturation: s, lightness: l }))
   }
   return requests
+}
+
+/*
+ * Turns a shade control patch ({ shadeAction, position?, reversed? }) into the
+ * Node.SHADE request. `position` is required for action 'position', `reversed`
+ * for action 'direction'.
+ */
+export function shadeRequest(nodeId, { shadeAction: action, position: pos, reversed: rev }) {
+  if (action === 'position' && pos === undefined) throw new Error('Node.SHADE position needs a position (0–100)')
+  if (action === 'direction' && rev === undefined) throw new Error('Node.SHADE direction needs reversed (true / false)')
+  return buildRequest('Node.SHADE', {
+    node_id: nodeId,
+    action,
+    ...(action === 'position' ? { position: pos } : {}),
+    ...(action === 'direction' ? { reversed: rev } : {}),
+  })
 }

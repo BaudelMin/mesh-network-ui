@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_LIGHTNESS,
   EMPTY_GATEWAY,
@@ -11,7 +11,8 @@ import {
   toScenes,
 } from './adapters.js'
 import { getClient, VARIABLES } from './client.js'
-import { buildRequest, lightRequests } from './commands.js'
+import { applyMotion, currentPosition, reconcileMotion, settleAt, startMotion, STOP } from '../devices/shade/motion.js'
+import { buildRequest, lightRequests, shadeRequest } from './commands.js'
 import { logDebug, logError, logInfo, logWarn } from './logger.js'
 
 // Slider drags fire many changes; only the last value per command+target is sent.
@@ -90,6 +91,8 @@ export function useGateway(notify) {
   const syncRun = useRef(null)
   // Default-lightness bookkeeping (applyDefaultLightness)
   const lightness = useRef({ first: new Map(), released: new Set() })
+  // Shade node id -> local motion shown until the driver reports (devices/shade/motion.js)
+  const [motion, setMotion] = useState({})
 
   // Ask the driver to re-read the gateway and rewrite every data variable, then
   // read back what it holds now. The driver has no completion signal, so the
@@ -166,7 +169,10 @@ export function useGateway(notify) {
     const subs = [
       client.onLink(setLink),
       client.onVariable(VARIABLES.info, (d) => setGateway(toGateway(d))),
-      onList(VARIABLES.nodes, (d) => applyDefaultLightness(lightness.current, 'Node', toNodes(d)), setNodes),
+      onList(VARIABLES.nodes, (d) => applyDefaultLightness(lightness.current, 'Node', toNodes(d)), (list) => {
+        setNodes(list)
+        setMotion((m) => reconcileMotion(m, list))
+      }),
       onList(VARIABLES.groups, (d) => applyDefaultLightness(lightness.current, 'Group', toGroups(d)), setGroups),
       onList(VARIABLES.scenes, toScenes, setScenes),
     ]
@@ -223,6 +229,54 @@ export function useGateway(notify) {
     requests.forEach((r) => (patch.on !== undefined ? send(r) : sendDebounced(r)))
   }
 
+  // Nodes as shown: the driver's data with any local shade motion on top.
+  const nodesView = useMemo(
+    () => nodes.map((n) => (n.shade && motion[n.id] ? { ...n, shade: applyMotion(n.shade, motion[n.id]) } : n)),
+    [nodes, motion],
+  )
+
+  // Shade actions: Node.SHADE through SetDeviceState, like the light commands.
+  // A moving action starts a local motion (animation + Stop enabled) until the
+  // driver reports the shade; with no report it is assumed to arrive.
+  const controlShade = (id, patch) => {
+    logDebug('gateway', `controlShade(${id})`, patch)
+    let request
+    try {
+      request = shadeRequest(id, patch)
+    } catch (err) {
+      logWarn('gateway', `controlShade(${id}) rejected`, err.message)
+      notify(err.message)
+      return
+    }
+    const shown = nodesView.find((n) => n.id === id)?.shade
+    const base = nodes.find((n) => n.id === id)?.shade?.position
+    const now = Date.now()
+    const next = startMotion(shown, patch.shadeAction, patch.position, now)
+    const key = `motion:${id}`
+    if (next === STOP) {
+      clearTimeout(timers.current[key])
+      setMotion((m) => ({ ...m, [id]: { ...settleAt(currentPosition(shown, now), now), base } }))
+    } else if (next) {
+      clearTimeout(timers.current[key])
+      setMotion((m) => ({ ...m, [id]: { ...next, base } }))
+      timers.current[key] = setTimeout(() => {
+        delete timers.current[key]
+        setMotion((m) => (m[id]?.startedAt === next.startedAt ? { ...m, [id]: { ...settleAt(next.target), base } } : m))
+      }, next.durationMs)
+    }
+    // Position follows the slider: debounced. Any other action goes at once and
+    // cancels a position still waiting to be sent.
+    if (patch.shadeAction === 'position') {
+      sendDebounced(request)
+    } else {
+      clearTimeout(timers.current[`Node.SHADE:${id}`])
+      delete timers.current[`Node.SHADE:${id}`]
+      send(request)
+    }
+  }
+
+  const controlLightNode = control('Node', setNodes)
+
   const sendCommand = (command, params) => {
     logDebug('gateway', `sendCommand(${command})`, params)
     try {
@@ -248,10 +302,10 @@ export function useGateway(notify) {
       scenes: waitingFor(VARIABLES.scenes),
     },
     gateway,
-    nodes,
+    nodes: nodesView,
     groups,
     scenes,
-    controlNode: control('Node', setNodes),
+    controlNode: (id, patch) => (patch.shadeAction ? controlShade(id, patch) : controlLightNode(id, patch)),
     controlGroup: control('Group', setGroups),
     recallScene: (sceneId) => sendCommand('Scene.RECALL', { scene_id: sceneId }),
     restart: () => sendCommand('Gateway.RESTART', {}),

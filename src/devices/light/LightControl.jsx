@@ -1,7 +1,7 @@
 import { DEFAULT_LIGHTNESS } from '../../api/adapters.js'
 import { OnOff } from '../../components/ui.jsx'
 
-function Slider({ label, value, min, max, step = 1, display, track, disabled, onChange }) {
+export function Slider({ label, value, min, max, step = 1, display, track, disabled, onChange }) {
   return (
     <label className={`slider ${disabled ? 'disabled' : ''}`}>
       <span className="slider-label">{label}</span>

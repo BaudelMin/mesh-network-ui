@@ -145,6 +145,7 @@ Params are listed as the panel sends them, in panel ranges. `fadetime` (ms, opti
 | `Node.BRIGHTNESS`  | `node_id`, `brightness` (0–100)                 | same                                         | Brightness slider (mode 1 nodes)            |
 | `Node.CCT`         | `node_id`, `cct` (2700–6500 K)                  | same                                         | CCT slider (mode 2 nodes)                   |
 | `Node.HSL`         | `node_id`, `hue` (0–360), `saturation` (0–100), `lightness` (0–100) | `hue`, `saturation`, `lightness` in 0–65535 | Hue/Saturation/Lightness sliders (all three always sent) |
+| `Node.SHADE`       | `node_id`, `action` (below); `position` (0–100) for `position`, `reversed` (bool) for `direction` | same, sent to `/rpc/Node.SHADE` (as the shade driver sends it) | Shade controls in Node Control, and the shade card toggle |
 | `Group.ONOFF`      | `group_id`, `onoff` (0/1)                       | same                                         | Group power                                 |
 | `Group.BRIGHTNESS` | `group_id`, `brightness` (0–100)                | same                                         | Group brightness slider                     |
 | `Group.CCT`        | `group_id`, `cct` (2700–6500 K)                 | same                                         | Group CCT slider                            |
@@ -231,6 +232,16 @@ This is an array with one entry per registered node. The driver builds it by mer
 | 1      | `onoff`, `brightness`, `master_brightness`                                         | Power, Brightness |
 | 2      | `onoff`, `hue`, `saturation`, `lightness`, `cct`, `cct_brightness` (+ `master_brightness` if set) | Power, CCT, Hue, Saturation, Lightness |
 | absent | whatever is known                                                                  | all |
+
+**Shade nodes** (`product_id` `HYP-SH-HT` or starting with `HYP-SH-`) are shown in the Nodes tab with a shade control, chosen by `product_id` (not `dev_type`). Their `state` is the shade state that `Node.SHADE` action `state` returns (`Node.SHADE.STATUS` `result.state`), unconverted:
+
+```json
+{ "position": 80, "target": 0, "moving": "closing", "favorite": 40, "open_limit_set": true, "close_limit_set": true, "favorite_set": true }
+```
+
+`position` / `target` / `favorite` are % open (100 = fully open), `null` when unknown (not calibrated). `moving` is `none`, `opening` or `closing`. Write it into `Nodes` on every `Node.SHADE.STATUS` for that node, including the 2 s `state` re-reads while it moves, so the panel can follow the move and knows when it stops (its **Stop** button is enabled only while `moving` isn't `none`). Without it, the panel animates an estimated move (about 30 s end to end) and assumes the shade arrived.
+
+`Node.SHADE` actions the panel sends: `open`, `close`, `stop`, `position`, `favorite`, `toggle`, `jog_up`, `jog_down`, `state`, and under *Setup & calibration* `calib_open`, `calib_close`, `set_open_limit`, `set_close_limit`, `set_favorite`, `clear_open_limit`, `clear_close_limit`, `clear_favorite`, `clear_limits`, `direction`, `factory_reset`. Route it like the shade driver's `ShadeApiRequest` (add `mac`, send to `/rpc/Node.SHADE`), and add `Node.SHADE` to the `SetDeviceState` allowlist.
 
 ### `Groups`
 

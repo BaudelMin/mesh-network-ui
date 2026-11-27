@@ -1,8 +1,11 @@
 import LightControl from './light/LightControl.jsx'
 import lightStatus from './light/lightStatus.js'
+import ShadeControl from './shade/ShadeControl.jsx'
+import shadeStatus from './shade/shadeStatus.js'
 
 /*
- * Device type registry. Nodes and groups pick their control + status UI by `type`.
+ * Device type registry. Nodes pick their control + status UI by `kind`, which
+ * comes from product_id (HYP-SH-* = shade, anything else = light); groups by `type`.
  *
  * To add a device type (e.g. blinds):
  *   1. Create src/devices/<type>/ with a Control component and a status function.
@@ -12,6 +15,7 @@ import lightStatus from './light/lightStatus.js'
  */
 export const DEVICE_TYPES = {
   light: { label: 'Light', Control: LightControl, status: lightStatus },
+  shade: { label: 'Shade', Control: ShadeControl, status: shadeStatus },
 }
 
 export const getDeviceType = (type) => DEVICE_TYPES[type] ?? null

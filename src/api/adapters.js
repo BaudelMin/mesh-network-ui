@@ -131,10 +131,9 @@ export function toGateway(data) {
 export const PRODUCT_IDS = { light: 'HYP-LT-HT', shade: 'HYP-SH-HT' }
 export const NODE_KINDS = { light: 'Light', shade: 'Shade' }
 
-// Shades have no control UI yet, so their nodes are left out of the Nodes tab
-// for now (they are still counted and named in groups and scenes). Remove a
-// kind from HIDDEN_NODE_KINDS to show it again.
-export const HIDDEN_NODE_KINDS = ['shade']
+// Node kinds left out of the Nodes tab (they are still counted and named in
+// groups and scenes). Empty: lights and shades both have a control UI.
+export const HIDDEN_NODE_KINDS = []
 export const isHiddenNode = (node) => HIDDEN_NODE_KINDS.includes(node.kind)
 
 // Same rule as the driver's per-group "Nodes Count": a node is a shade when its
@@ -146,6 +145,34 @@ export const isShadeProduct = (productId) => {
 }
 
 const nodeKind = (productId) => (isShadeProduct(productId) ? 'shade' : 'light')
+
+const pct = (v) => (typeof v === 'number' ? Math.max(0, Math.min(100, Math.round(v))) : undefined)
+const SHADE_MOVING = ['none', 'opening', 'closing']
+
+// A shade's state as the shade driver reads it with Node.SHADE "state":
+//   { position, target, moving: none | opening | closing, favorite,
+//     open_limit_set, close_limit_set, favorite_set }
+// position / target / favorite are % open (100 = fully open); undefined when
+// unknown (null from a shade that isn't calibrated, or not read yet).
+export const EMPTY_SHADE_STATE = {
+  position: undefined, target: undefined, moving: 'none', favorite: undefined,
+  openLimitSet: undefined, closeLimitSet: undefined, favoriteSet: undefined,
+}
+
+function shadeState(state) {
+  const s = obj(state)
+  const bool = (v) => (typeof v === 'boolean' ? v : undefined)
+  return {
+    ...EMPTY_SHADE_STATE,
+    position: pct(s.position),
+    target: pct(s.target),
+    moving: SHADE_MOVING.includes(s.moving) ? s.moving : 'none',
+    favorite: pct(s.favorite),
+    openLimitSet: bool(s.open_limit_set),
+    closeLimitSet: bool(s.close_limit_set),
+    favoriteSet: bool(s.favorite_set),
+  }
+}
 
 /*
  * Counts a group's / scene's member node ids by kind, using the Nodes list:
@@ -175,6 +202,8 @@ export const toNodes = (data) =>
       online: Boolean(n.is_alive),
       mode: num(n.mode),
       ...lightState(n.state),
+      // Shades only: the control UI is picked by `kind` (product_id), not dev_type.
+      ...(isShadeProduct(n.product_id) ? { shade: shadeState(n.state) } : {}),
     }))
     .filter((n) => n.id)
 
